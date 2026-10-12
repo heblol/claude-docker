@@ -26,7 +26,7 @@ DOCKER = """#!/bin/sh
 printf '%s\\n' "$@" > "$STUB_LOG/argv"
 printf '%s' "${GITLAB_TOKEN:-}" > "$STUB_LOG/token"
 printf '%s' "${GITLAB_HOST:-}" > "$STUB_LOG/host"
-for a; do case "$a" in *:/root/.config/glab-cli/config.yml:ro) cp "${a%%:*}" "$STUB_LOG/glab-config.yml" ;; esac; done
+for a; do case "$a" in *:/root/.config/glab-cli/config.yml:ro) cp -p "${a%%:*}" "$STUB_LOG/glab-config.yml" ;; esac; done
 """
 # Host glab: answers `config get host` from GITLAB_HOST (as real glab does) and
 # holds tokens for gl.example.com and other.example.com, returned solely via
@@ -100,6 +100,12 @@ class GlabTokenDiscovery(unittest.TestCase):
         self.assertIn("    use_keyring: false\n", cfg)
         self.assertNotIn("use_keyring: true", cfg)
         self.assertIn("api_host: gl.example.com", cfg)
+
+    def test_config_overlay_is_owner_only(self):
+        # glab refuses a config.yml that others can read (#168), and the copy
+        # is mounted :ro, so the mode can't be fixed inside the container.
+        self._run()
+        self.assertEqual((self.log / "glab-config.yml").stat().st_mode & 0o777, 0o600)
 
     def test_no_host_config_skips_overlay(self):
         (self.home / ".config" / "glab-cli" / "config.yml").unlink()
