@@ -5,10 +5,8 @@ name: release
 # https://github.com/schubergphilis/mcvs-general-action/blob/main/docs/auto-release.md
 #
 # The tag is created with GITHUB_TOKEN, which starts no workflow, so docker.yml
-# does not run for it on its own and is dispatched on the new tag instead.
-# mcvs-docker-action only pushes the image on a `push` event, so that dispatched
-# run builds and scans but does not publish until the action also pushes for a
-# dispatched tag ref.
+# does not run for it on its own and is dispatched on the new tag instead,
+# which builds, scans and publishes the image like a tag push.
 "on":
   push:
     branches:
