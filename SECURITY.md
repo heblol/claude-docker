@@ -25,17 +25,21 @@ fix is available if publication adds anything for users.
 
 ## Supported versions
 
-Pre-1.0. Fixes land on `main`; there are no backports to earlier pre-releases.
+Pre-1.0. Fixes land on `main` and ship in the next release; there are no
+backports.
 
-| Version              | Supported        |
-| -------------------- | ---------------- |
-| `main`               | Yes              |
-| Latest `v0.1.0-rc.*` | Yes, best effort |
-| Earlier pre-releases | No               |
+| Version                           | Supported |
+| --------------------------------- | --------- |
+| `main`                            | Yes       |
+| Latest `vX.Y.Z` release           | Yes       |
+| Earlier releases                  | No        |
+| Pre-releases (e.g. `v0.1.0-rc.6`) | No        |
 
-Note that the image is built locally from this repository rather than pulled
-from a registry, so "upgrading" means rebuilding — see
-[Install](README.md#install).
+Each release is published to GHCR as a prebuilt image, and building from this
+repository stays supported. Either way, upgrading means moving to the newer
+release: pull its tag, or check it out and rebuild — see
+[Install](README.md#install) and [Prebuilt image from
+GHCR](README.md#prebuilt-image-from-ghcr).
 
 ## Scope
 
