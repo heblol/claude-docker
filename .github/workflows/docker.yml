@@ -63,11 +63,7 @@ jobs:
       # .hadolint.yaml, .dockleignore and .grype.yaml. Tagging is
       # metadata-action's defaults with latest=false, so a v0.1.0 tag publishes
       # :v0.1.0 and nothing else.
-      #
-      # Pinned to the untagged merge of mcvs-docker-action#184, which pushes on a
-      # dispatched tag too; no release contains it yet. Move to the first
-      # release that does.
-      - uses: schubergphilis/mcvs-docker-action@6337e7f3476ccb045921e1366561e9f4e025d9e5 # v0.13.2-2-g6337e7f
+      - uses: schubergphilis/mcvs-docker-action@c9dfc78bd277dcabbe8719db6e1fc58b2eb673e1 # v0.14.0
         with:
           images: ghcr.io/${{ github.repository }}
           platforms: linux/amd64,linux/arm64
