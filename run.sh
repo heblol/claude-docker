@@ -690,9 +690,9 @@ build_flags_env() {
   # --yolo is omitted intentionally: Claude Code already shows the permission
   # mode in its UI, so duplicating it here would just be noise.
   DOCKER_FLAGS=()
+  [ "$WITH_AWS" = "1" ]      && DOCKER_FLAGS+=("aws")
   [ "$WITH_GH" = "1" ]       && DOCKER_FLAGS+=("gh")
   [ "$WITH_GH_DIRECT" = "1" ] && DOCKER_FLAGS+=("gh-direct")
-  [ "$WITH_AWS" = "1" ]      && DOCKER_FLAGS+=("aws")
   [ "$WITH_GLAB" = "1" ]     && DOCKER_FLAGS+=("glab")
   [ "$WITH_TFE" = "1" ]      && DOCKER_FLAGS+=("tfe")
   [ "$WITH_AZ" = "1" ]       && DOCKER_FLAGS+=("az")
