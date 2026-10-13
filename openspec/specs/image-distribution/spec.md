@@ -14,9 +14,18 @@ actionable by the author of an unrelated change.
 
 ### Requirement: The image is published on a version tag
 
-The pipeline SHALL publish the built image to a container registry when, and only when, a
-version tag is pushed. A push to a branch, or any other event, SHALL build and scan the image
-without publishing it.
+The pipeline SHALL publish the built image to a container registry when, and only when, it
+runs on a version tag ref: either because the version tag was pushed, or because the pipeline
+was dispatched on that tag. A push to a branch, a dispatch on a branch, or any other event,
+SHALL build and scan the image without publishing it.
+
+A version tag created by the automated release on a merge to the default branch SHALL lead to
+a published image without manual steps. Such a tag is created with a token whose events start
+no workflow, so the release SHALL dispatch the pipeline on the tag it created.
+
+A dispatch on a version tag that already has a published image republishes that tag with a
+newly built artifact. A manual dispatch on a tag SHALL therefore be reserved for recovering a
+tag with no published image, and the project's documentation SHALL say so.
 
 The published reference SHALL be immutable: the version tag SHALL be published verbatim, and
 the pipeline SHALL NOT publish a moving tag such as `latest` alongside it. A consumer
@@ -40,6 +49,14 @@ a defect is the next release, not a change published against the pre-release its
 - **WHEN** a version tag is pushed
 - **THEN** the image is published to the registry under that tag
 
+#### Scenario: a merge to the default branch cuts a release
+
+- **GIVEN** a merge to the default branch whose commits call for a new version
+- **WHEN** the automated release creates the version tag
+- **THEN** it dispatches the pipeline on that tag
+- **AND** given the build, lint and scan stages all pass, the image is published to the
+  registry under that tag
+
 #### Scenario: a pre-release tag is pushed
 
 - **GIVEN** the build, lint and scan stages all pass
@@ -51,6 +68,13 @@ a defect is the next release, not a change published against the pre-release its
 
 - **GIVEN** a push to the default branch
 - **WHEN** the pipeline runs
+- **THEN** the image is built, linted and scanned
+- **AND** nothing is published to the registry
+
+#### Scenario: a dispatch on a branch does not publish
+
+- **GIVEN** the pipeline is dispatched on a branch
+- **WHEN** it runs
 - **THEN** the image is built, linted and scanned
 - **AND** nothing is published to the registry
 
@@ -99,7 +123,10 @@ fails therefore results in no published image.
 
 Because a failed run is indistinguishable from an unstarted one at the registry, this
 outcome — a tag that exists in the repository with no corresponding published image — SHALL be
-documented rather than left to be discovered.
+documented rather than left to be discovered. The documentation SHALL cover both causes: a
+pipeline run on the tag that failed, and an automated release whose dispatch failed, so that
+no pipeline run exists for the tag; and SHALL name how to start the pipeline on the tag in the
+second case.
 
 #### Scenario: a scan failure blocks the release
 
@@ -114,6 +141,14 @@ documented rather than left to be discovered.
 
 - **WHEN** a maintainer reads the project's documentation for the distribution channel
 - **THEN** it states that a failing scan on a version tag publishes nothing
+
+#### Scenario: a release whose dispatch failed is recoverable
+
+- **GIVEN** the automated release created a version tag
+- **AND** its dispatch of the pipeline failed, so no pipeline run exists for the tag
+- **WHEN** a maintainer reads the project's documentation for the distribution channel
+- **THEN** it states that a tag with no pipeline run means the dispatch failed
+- **AND** it names the command that dispatches the pipeline on that tag
 
 ### Requirement: Scan coverage is stated where it is incomplete
 
