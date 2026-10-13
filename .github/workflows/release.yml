@@ -1,5 +1,5 @@
 ---
-name: release
+name: Release
 # Tags the next semver version from the Conventional Commits since the last
 # `vX.Y.Z` tag and creates a GitHub Release, see
 # https://github.com/schubergphilis/mcvs-general-action/blob/main/docs/auto-release.md
