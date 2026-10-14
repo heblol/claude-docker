@@ -10,6 +10,10 @@ name: Docker
 # the action, only the push is tag-gated, so an arch-specific build failure
 # surfaces on main and not on the tag that was meant to release it.
 #
+# A tag run whose tag already has an image in ghcr fails before building, so
+# a re-run or a stray dispatch cannot replace what a published version pulls.
+# A defect in a published image is fixed by cutting a new version.
+#
 # No `pull_request` trigger on purpose. ci.yml's `Docker build (validate, no
 # push)` already builds the image on every PR, with a gha layer cache this
 # action does not use, and now builds one architecture where this builds two —
@@ -42,6 +46,41 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # A version tag must keep denoting the image first published under it,
+      # and a rebuild is never that image: the apt layers are not pinned, so
+      # the digest differs. A re-run, or a dispatch on a tag that already
+      # published, would otherwise push over it. Only "not found" lets the
+      # run continue; an auth, network or rate-limit error fails it rather
+      # than read as absent. The ref is built as metadata-action builds it:
+      # lowercased image, tag with invalid characters replaced by `-`.
+      #
+      # The login is for a private package and the higher rate limit. It is
+      # undone on exit, and the action logs in to ghcr itself before pushing.
+      - name: Refuse to republish an existing version tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$(sed -E 's/[^a-zA-Z0-9._-]+/-/g' <<<"${GITHUB_REF_NAME}")"
+          ref="ghcr.io/${GITHUB_REPOSITORY,,}:${tag}"
+
+          trap 'docker logout ghcr.io >/dev/null' EXIT
+          docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin \
+            <<<"${GHCR_TOKEN}" >/dev/null
+
+          if out="$(docker buildx imagetools inspect \
+            --format '{{json .Manifest.Digest}}' "${ref}" 2>&1)"; then
+            echo "::error title=Tag already published::${ref} is already published (${out}). This pipeline never replaces a published tag, so that a version always denotes the same image. Cut a new version instead."
+            exit 1
+          fi
+          if [[ "${out}" != *"${ref}: not found"* ]]; then
+            printf '%s\n' "${out}"
+            echo "::error title=Cannot check ghcr::Could not tell whether ${ref} is already published, see the output above. Refusing to publish rather than risk replacing it."
+            exit 1
+          fi
+          echo "${ref} is not published yet, continuing."
       # The action sets up QEMU and buildx itself and pushes a multi-arch
       # manifest list with buildx rather than `docker push`, so do NOT add a
       # setup-buildx step here — it would replace the builder whose layer cache
