@@ -3,9 +3,19 @@
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before changing anything. The parts
 most often missed:
 
-- **Behaviour or spec change? Draft the OpenSpec change first**, before writing
-  the code — see [OpenSpec changes](CONTRIBUTING.md#openspec-changes). A small
-  fix that leaves every spec as-is does not need one.
+- **Check every PR against OpenSpec, not only the ones that look like
+  behaviour changes.** Before you open a PR, and again before you push to one,
+  search `openspec/specs/` for what the diff touches: file paths, workflow
+  names and triggers, env vars, commands, documented outputs. Read every
+  requirement that turns up. CI, docs and dependency changes count too. A
+  workflow change can break a spec as easily as a code change can.
+- **A requirement no longer holds? Draft the OpenSpec change first**, before
+  writing the code — see [OpenSpec changes](CONTRIBUTING.md#openspec-changes).
+  A change that leaves every spec as-is does not need one.
+- **Record the result in the PR description's `OpenSpec` section** from the
+  [PR template](.github/pull_request_template.md): the archived change, or
+  `No spec change` with the specs you checked. Update it when later commits
+  change the answer.
 - **Never hand-edit `openspec/specs/`.** It is generated when a change is
   archived; fix the delta and re-archive.
 - **Run the [local checks](CONTRIBUTING.md#local-checks-before-opening-a-pr)**

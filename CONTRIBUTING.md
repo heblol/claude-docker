@@ -43,6 +43,12 @@ For a change that reshapes the project, have the artifacts reviewed after step 1
 and before step 2: rewriting a proposal is cheap, redoing an implementation is
 not.
 
+Check every PR against [`openspec/specs/`](openspec/specs/), including CI, docs
+and dependency changes: search the specs for what the diff touches and read
+the requirements that turn up. Record the result in the PR template's
+**OpenSpec** section, so a reviewer can see the check was done instead of
+having to do it.
+
 ## Local checks before opening a PR
 
 CI runs these on every PR; running them locally first is faster:
