@@ -49,7 +49,7 @@ export CLAUDE_DOCKER_IMAGE=ghcr.io/schubergphilis/claude-docker:v0.1.0
 
 **Scan coverage is not symmetric, and you should know which half you're getting.** The publish pipeline lints with hadolint and dockle and scans with dive and grype, but only one architecture reaches those tools: the action loads a single image into the local docker store and prefers whichever platform the runner provides natively, which is `linux/amd64`. So **`linux/arm64` is built and published without passing dockle, dive or grype.** Both images come from one Dockerfile and one set of pins, and the findings that drive the suppressions in [`.grype.yaml`](.grype.yaml) are vendored-code findings that reproduce identically on both — but the gap is real and is recorded here rather than implied away. `ci.yml`'s Trivy gate and the weekly [image scan](docs/security.md#image-vulnerability-scanning) are likewise amd64-only.
 
-Because that scan runs *before* the push, **a `v*` tag whose pipeline run goes red publishes nothing.** If a tag exists here with no package behind it, check the Docker workflow run for that tag before assuming a registry problem.
+Because that scan runs *before* the push, **a `v*` tag whose pipeline run goes red publishes nothing.** If a tag exists here with no package behind it, check the Docker workflow run for that tag before assuming a registry problem. If there is no Docker run for the tag at all, the release workflow created the tag but failed to dispatch the build — re-running the release job does not retry that, so start it yourself with `gh workflow run docker.yml --ref <tag>`. Only do that for a tag with no image: a dispatch on a tag that already has one rebuilds it and replaces what that tag points to.
 
 ## Container runtime
 
