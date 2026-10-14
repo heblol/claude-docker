@@ -1118,10 +1118,12 @@ EOF
 # The in-container glab reads job_token through the OS keyring whenever the
 # host's config.yml says use_keyring: true, even with GITLAB_TOKEN set (no env
 # var covers job_token), and that read fails hard without D-Bus. Overlay a copy
-# with the keyring turned off; the token itself arrives as GITLAB_TOKEN.
+# with the keyring turned off; the token itself arrives as GITLAB_TOKEN. glab
+# refuses a config.yml that others can read, so write the copy as 0600 rather
+# than whatever the umask gives (#168).
 stage_glab_config() {
   [ -n "$GLAB_SRC" ] && [ -f "$GLAB_SRC/config.yml" ] || return 0
-  sed 's/^\([[:space:]]*use_keyring:\).*/\1 false/' "$GLAB_SRC/config.yml" >"$stage/glab-config.yml" || exit 1
+  (umask 077 && sed 's/^\([[:space:]]*use_keyring:\).*/\1 false/' "$GLAB_SRC/config.yml" >"$stage/glab-config.yml") || exit 1
   MOUNT_ARGS+=("-v" "$(hostpath "$stage/glab-config.yml"):/root/.config/glab-cli/config.yml:ro")
 }
 

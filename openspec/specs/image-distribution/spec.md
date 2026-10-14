@@ -23,14 +23,19 @@ A version tag created by the automated release on a merge to the default branch 
 a published image without manual steps. Such a tag is created with a token whose events start
 no workflow, so the release SHALL dispatch the pipeline on the tag it created.
 
-A dispatch on a version tag that already has a published image republishes that tag with a
-newly built artifact. A manual dispatch on a tag SHALL therefore be reserved for recovering a
-tag with no published image, and the project's documentation SHALL say so.
+A run on a version tag whose reference already exists in the registry SHALL NOT publish, and
+SHALL fail, whatever started it: a push of the tag, a re-run, or a dispatch. The pipeline SHALL
+check the registry for the reference before publishing, and SHALL treat any outcome of that
+check other than a confirmed absence as the reference being present: a registry error fails
+the run rather than letting it publish. A dispatch on a tag therefore only ever fills in a
+missing image, and the project's documentation SHALL say so.
 
 The published reference SHALL be immutable: the version tag SHALL be published verbatim, and
 the pipeline SHALL NOT publish a moving tag such as `latest` alongside it. A consumer
 therefore names a full version tag to pull, and a given reference always denotes the same
-artifact.
+artifact. This is guaranteed by the pipeline's refusal to publish over an existing reference,
+not by convention: the build is not reproducible, since its distribution packages are not
+pinned, so a rebuild of the same tag would yield a different artifact.
 
 A version tag carrying a pre-release suffix SHALL publish on the same terms as any other:
 under its own verbatim tag, through the same lint and scan gate, and without creating or
@@ -46,6 +51,7 @@ a defect is the next release, not a change published against the pre-release its
 #### Scenario: a version tag is pushed
 
 - **GIVEN** the build, lint and scan stages all pass
+- **AND** the registry has no image under that tag
 - **WHEN** a version tag is pushed
 - **THEN** the image is published to the registry under that tag
 
@@ -60,6 +66,7 @@ a defect is the next release, not a change published against the pre-release its
 #### Scenario: a pre-release tag is pushed
 
 - **GIVEN** the build, lint and scan stages all pass
+- **AND** the registry has no image under that tag
 - **WHEN** a version tag carrying a pre-release suffix is pushed
 - **THEN** the image is published to the registry under that tag verbatim
 - **AND** no stable tag is created or moved by that publication
@@ -77,6 +84,29 @@ a defect is the next release, not a change published against the pre-release its
 - **WHEN** it runs
 - **THEN** the image is built, linted and scanned
 - **AND** nothing is published to the registry
+
+#### Scenario: a run on an already-published tag is refused
+
+- **GIVEN** an image is already published to the registry under a version tag
+- **WHEN** the pipeline runs on that tag again, whether by a re-run or a dispatch
+- **THEN** nothing is published to the registry
+- **AND** the run fails
+- **AND** the tag still denotes the artifact it was first published with
+
+#### Scenario: a registry error during the check is refused
+
+- **GIVEN** the pipeline runs on a version tag
+- **AND** the registry check returns an error other than the reference not being found
+- **WHEN** the pipeline reaches publication
+- **THEN** nothing is published to the registry
+- **AND** the run fails
+
+#### Scenario: a dispatch on a tag with no image publishes it
+
+- **GIVEN** a version tag with no image in the registry
+- **AND** the build, lint and scan stages all pass
+- **WHEN** the pipeline is dispatched on that tag
+- **THEN** the image is published to the registry under that tag
 
 #### Scenario: no moving tag is published
 
@@ -118,7 +148,7 @@ is published.
 ### Requirement: Publication is gated on the lint and scan stages
 
 The image SHALL be linted and scanned for known vulnerabilities before it is published, and a
-failure at any of those stages SHALL prevent publication. A version tag whose pipeline run
+failure at any of those stages SHALL prevent publication. A version tag whose lint or scan stage
 fails therefore results in no published image.
 
 Because a failed run is indistinguishable from an unstarted one at the registry, this
