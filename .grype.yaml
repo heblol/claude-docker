@@ -54,7 +54,7 @@ ignore:
   # with an npm release that carries the fix; npm 11.21.0 and 12.2.0 still ship
   # the versions below. Scoped to version and npm's tree, so an npm bump that
   # moves them, or any other copy, stays enforced. undici and brace-expansion
-  # mirror the three .trivyignore entries. http-cache-semantics has no patched
+  # mirror the four npm-tree .trivyignore entries. http-cache-semantics has no patched
   # release per its advisory (GHSA-ch52-4w7c-c8xp), so trivy doesn't gate it,
   # but grype's only-fixed=false does.
   - package:
@@ -62,8 +62,8 @@ ignore:
       version: 6.28.0
       location: "**/node_modules/npm/**"
     reason: >-
-      Bundled by npm; no npm release carries 6.28.1 yet. Moves with
-      pins/npm.env.
+      Bundled by npm; no npm release carries 6.28.1 (or 6.29.1) yet. Moves
+      with pins/npm.env.
   - package:
       name: brace-expansion
       version: 5.0.9
@@ -78,3 +78,15 @@ ignore:
     reason: >-
       Bundled by npm; the advisory lists no patched version. Moves with
       pins/npm.env.
+
+  # pnpm's bundle (pins/pnpm.env) vendors undici 6.29.0 under pnpm/dist; the
+  # fix for CVE-2026-109869 needs 6.29.1. pnpm 12.15.0 carries it and leaves
+  # the 7-day soak on 2026-10-28. Mirrors the .trivyignore entry, scoped to
+  # this version and pnpm's tree like the npm rules above.
+  - package:
+      name: undici
+      version: 6.29.0
+      location: "**/node_modules/pnpm/**"
+    reason: >-
+      Bundled by pnpm; the fixed 12.15.0 is still in the soak window. Moves
+      with pins/pnpm.env.
