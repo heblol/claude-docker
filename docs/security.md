@@ -56,9 +56,9 @@ The container narrows blast radius vs. running `claude --yolo` on the host, but 
 
 ## Image vulnerability scanning
 
-CI scans the built image for **known** vulnerabilities with [Trivy](https://trivy.dev), across the whole image filesystem: the Ubuntu base image's system packages, the pinned CLIs, and their transitive dependencies. This is a different question from the one [`scripts/update_pins.py`](../scripts/update_pins.py) answers — that reports when a *newer* version exists, while a pin can sit on the newest release and still carry a disclosed CVE. It is also a different question from the `npm audit signatures` check in [Updating pinned tool versions](maintenance.md#updating-pinned-tool-versions), which establishes that a tarball came from npm's keyring, not that the code inside it is free of known vulnerabilities.
+CI scans the built image for **known** vulnerabilities with [Trivy](https://trivy.dev) and [grype](https://github.com/anchore/grype), across the whole image filesystem: the Ubuntu base image's system packages, the pinned CLIs, and their transitive dependencies. This is a different question from the one [`scripts/update_pins.py`](../scripts/update_pins.py) answers — that reports when a *newer* version exists, while a pin can sit on the newest release and still carry a disclosed CVE. It is also a different question from the `npm audit signatures` check in [Updating pinned tool versions](maintenance.md#updating-pinned-tool-versions), which establishes that a tarball came from npm's keyring, not that the code inside it is free of known vulnerabilities.
 
-Each scan runs twice over the same image, with one policy:
+Each scanner runs twice over the same image, with one policy:
 
 | Finding | Effect |
 | --- | --- |
@@ -78,5 +78,7 @@ CVE-2026-12345 exp:2026-12-01
 ```
 
 Both are mandatory, and [`tests/test_trivyignore.py`](../tests/test_trivyignore.py) is what makes them so — Trivy itself accepts an entry with no expiry and then suppresses it forever, which is how an accepted risk becomes a forgotten one. Past the expiry Trivy stops suppressing and the finding gates again. Suppression is per-CVE; lowering the scan's severity threshold or dropping the gate step is not the same decision as accepting one finding, and is not an accepted-risk mechanism.
+
+grype is the scanner the [publish pipeline](../.github/workflows/docker.yml) runs before it pushes, and it reads its own accepted findings from [`.grype.yaml`](../.grype.yaml). Those rules are scoped by package, version and location rather than by CVE, and carry no expiry. A finding fails the build unless **both** files accept it, so `.trivyignore`'s expiry still bounds every accepted risk. Running grype on the PR too is what catches a pin bump that moves a bundled package out of a version-scoped `.grype.yaml` rule: `.trivyignore` matches the CVE anywhere in the image and stays green, while the publish scan on `main` and on the release tag would fail. When you bump a pin, update the `.grype.yaml` rules it moves along with `.trivyignore`.
 
 A weekly run scans `main` on the same terms: [`image-scan.yml`](../.github/workflows/image-scan.yml) fires every Monday (and on demand via _Run workflow_), rebuilds the image — nothing publishes it to a registry, so there is nothing to pull — and applies the identical policy, so it reports what the next PR will be blocked by. It covers the case a PR scan structurally cannot: a CVE disclosed against an image whose pins never moved. **A failing run is the only notification** — nothing opens an issue and nothing uploads a report, which keeps the workflow's permissions at `contents: read`.
