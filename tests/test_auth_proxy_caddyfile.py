@@ -314,7 +314,8 @@ class SidecarBehaviourTest(unittest.TestCase):
     def test_glab_default_policy_blocks_project_and_group_deletion(self):
         self._start()
         for path in ("/api/v4/projects/123", "/api/v4/projects/123/", "/api/v4/projects/g%2Fsub%2Fp",
-                     "/api/v4/projects/g%2fp?x=1", "//api/v4/groups/42"):
+                     "/api/v4/projects/g%2fp?x=1", "//api/v4/groups/42", "/api/v4//projects/1",
+                     "/api//v4/projects/1", "/api/v4/projects/1.json"):
             with self.subTest(path=path):
                 st, body = self.glab("DELETE", path)
                 self.assertEqual(st, 403)
@@ -342,6 +343,11 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("POST", "//api/v4//personal_access_tokens/self/rotate"),
             ("POST", "/api/v4/projects/123//access_tokens/"),
             ("PUT", "/api/v4/personal_access_tokens/self/rotate"),
+            ("POST", "/api//v4/user/personal_access_tokens"),
+            ("POST", "/api/v4/user/personal_access_tokens.json"),
+            ("POST", "/api/v4/personal_access_tokens/self/rotate.json"),
+            ("POST", "/api/v4/projects/123/access_tokens.json?x=1"),
+            ("POST", "/api/v4/deploy_tokens.json/"),
         )
         for method, path in blocked:
             with self.subTest(method=method, path=path):

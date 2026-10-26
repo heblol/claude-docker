@@ -86,7 +86,7 @@ An exported `GITLAB_TOKEN` always wins. If `glab` isn't installed or has no toke
 
 Under `--glab` the token, exported or discovered, never enters the agent container. It goes to the session's [auth proxy sidecar](#github-auth-proxy), which adds it to requests in transit. The agent container gets the placeholder `GITLAB_TOKEN=claude-docker-proxy`, which is enough for `glab` to consider itself authenticated.
 
-- **One host is proxied:** the host the token belongs to. That is `GITLAB_HOST` when set, else the host discovery found the token for, else, for an exported token, glab's default host (the `host:` key in glab's `config.yml`, else `gitlab.com`). An exported token is never tied to the `origin` host, which may not be GitLab at all. Its port is kept, so `gitlab.example.com:8443` works. That host resolves to the sidecar via `--add-host`, and the sidecar terminates TLS for it with the session CA. Other hostnames, such as a separate `registry.gitlab.example.com`, resolve normally and never see the token.
+- **One host is proxied:** the host the token belongs to. That is `GITLAB_HOST` when set, else the host discovery found the token for, else, for an exported token, glab's default host (the `host:` key in glab's `config.yml`, else `gitlab.com`). An exported token is never tied to the `origin` host, which may not be GitLab at all. Neither is a token that host glab returns for any host (`GITLAB_ACCESS_TOKEN`, `OAUTH_TOKEN`, or a legacy top-level `token:` in `config.yml`): it goes to the default host, like an exported one. Its port is kept, so `gitlab.example.com:8443` works. That host resolves to the sidecar via `--add-host`, and the sidecar terminates TLS for it with the session CA. Other hostnames, such as a separate `registry.gitlab.example.com`, resolve normally and never see the token.
 - **What gets the token:**
   - `/api/…` (REST and GraphQL) gets `Authorization: Bearer <token>`, which GitLab accepts for PATs and OAuth tokens alike.
   - Git smart-HTTP paths (`info/refs`, `git-upload-pack`, `git-receive-pack`) get `Basic oauth2:<token>`, so `git clone` / `push` over HTTPS work with no credential prompt.
@@ -97,6 +97,8 @@ Under `--glab` the token, exported or discovered, never enters the agent contain
   - `DELETE` of a project or group (`/api/v4/projects/:id`, `/api/v4/groups/:id`, numeric id or URL-encoded path).
   - REST calls that create or rotate a token, since the response would hand the container a real credential: personal access tokens (`/personal_access_tokens/:id/rotate`, `self` included; `/user/personal_access_tokens`; `/users/:id/personal_access_tokens`), impersonation tokens, project and group access tokens and their rotation, deploy tokens, and group service-account tokens. GraphQL mutations that create tokens are not filtered.
 
+  The match runs on the raw request URI and allows repeated slashes and a `.json` suffix, both of which GitLab accepts. It is a best-effort filter for the paths GitLab is known to route, not a guarantee: scope the token itself to what the session needs.
+
   Extend the policy with `CLAUDE_DOCKER_GLAB_POLICY=<path>`, a Caddyfile snippet imported into the GitLab site block. A set path that isn't a readable file is a startup error.
 - **Audit log** entries carry the GitLab host, method, path and status. Request headers are left out entirely.
 
@@ -106,6 +108,7 @@ Under `--glab` the token, exported or discovered, never enters the agent contain
 
 - If glab's `config.yml` sets an `api_host` for the proxied host that differs from the host itself, glab sends API calls there. Those calls aren't intercepted and fail with the placeholder; the wrapper warns at startup. Remove the `api_host` or use `--glab-direct`.
 - A short-lived glab OAuth token (about 2h) is captured at launch and isn't refreshed mid-session, the same as before. Relaunch to pick up a fresh one.
+- Only `token` values are blanked in the mounted `config.yml`. Values under a host's `custom_headers` (for example a Cloudflare Access client secret) stay readable in the container, and the sidecar forwards those headers as sent. Keep secrets out of `custom_headers`, or use `--glab-direct` knowingly.
 - SSH remotes (`git@gitlab.example.com:…`) are unsupported, as before: no key or agent is mounted. See [SSH remotes](#ssh-remotes).
 
 ## Git over HTTPS
