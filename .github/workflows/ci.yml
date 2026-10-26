@@ -36,9 +36,24 @@ jobs:
           scandir: .
           version: v0.11.0
 
+      - name: Caddy binary for the auth-proxy sidecar tests
+        # Copied out of the digest-pinned image run.sh starts as the sidecar,
+        # so the tests exercise exactly that Caddy with no second pin to keep.
+        run: |
+          set -euo pipefail
+          img=$(sed -n 's/^PROXY_IMAGE="\${CLAUDE_DOCKER_PROXY_IMAGE:-\(.*\)}"$/\1/p' run.sh)
+          test -n "$img"
+          cid=$(docker create "$img")
+          docker cp "$cid:/usr/bin/caddy" "$RUNNER_TEMP/caddy"
+          docker rm "$cid" >/dev/null
+          "$RUNNER_TEMP/caddy" version
+          echo "CADDY_BIN=$RUNNER_TEMP/caddy" >> "$GITHUB_ENV"
+
       - name: Unit tests — update_pins.py helpers
         # stdlib unittest on the runner's preinstalled python3 — no install,
         # no third-party action (the suite imports only the standard library).
+        env:
+          CLAUDE_DOCKER_TEST_REQUIRE_CADDY: "1"
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: BATS unit tests — shell scripts
@@ -160,6 +175,15 @@ jobs:
           #     path with a GID that differs from the runner's (asserts the
           #     dropped process lands in exactly that primary group).
           run_cell --uid=501 --gid=501 --volstate=cold --ephemeral=0
+
+      - name: Auth-proxy integration harness
+        # Drives run.sh end to end against mock GitHub, GitLab and API
+        # upstreams with fake credentials. Lives in docker-build for the same
+        # reason as the smoke steps: it needs the image loaded above.
+        env:
+          CLAUDE_DOCKER_IMAGE: claude-docker:ci
+          GH_PROXY_IT_REQUIRE_DOCKER: "1"
+        run: bash tests/integration/gh-proxy-integration.sh
 
       - name: API egress lock smoke (run.sh end-to-end)
         # The --egress-lock lives entirely in run.sh (internal network, squid

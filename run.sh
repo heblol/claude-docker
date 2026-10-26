@@ -141,6 +141,8 @@ Wrapper flags:
 Separator:
   --                  Ends wrapper-flag parsing. Everything after is passed
                       to `claude`, e.g. `claude-docker ~/repo -- --resume`.
+                      Resume a past session with `-- --resume` (picker),
+                      `-- --resume <session-id>` or `-- --continue` (latest).
 
 Environment:
   CLAUDE_DOCKER_TMUX       1  → plain tmux wrapper (same as --tmux).
@@ -990,6 +992,7 @@ discover_tokens() {
   if { [ "$WITH_GLAB" = "1" ] || [ "$WITH_GLAB_DIRECT" = "1" ]; } \
      && { [ -z "${GITLAB_TOKEN:-}" ] || [ "$WITH_GLAB" = "1" ]; }; then
     _glab_hosts=()
+    _glab_origin=""
     if [ -n "${GITLAB_HOST:-}" ]; then
       _glab_hosts=("$GITLAB_HOST")
     else
@@ -1016,7 +1019,10 @@ discover_tokens() {
               _glab_remote=${_glab_remote##*@}
               ;;
           esac
-          [ -n "$_glab_remote" ] && _glab_hosts+=("$_glab_remote")
+          if [ -n "$_glab_remote" ]; then
+            _glab_hosts+=("$_glab_remote")
+            _glab_origin=$(glab_host_of "$_glab_remote")
+          fi
         fi
       fi
       if command -v glab >/dev/null 2>&1; then
@@ -1042,14 +1048,31 @@ discover_tokens() {
       _glab_from="${_glab_hosts[${#_glab_hosts[@]}-1]}"
       _glab_host=$(glab_host_of "$_glab_from")
     elif command -v glab >/dev/null 2>&1; then
+      # `glab config get token --host` answers GITLAB_ACCESS_TOKEN, OAUTH_TOKEN
+      # or a legacy root-level `token:` for any host. Such a token is no proof
+      # that the origin is a GitLab host, and the origin comes from a writable
+      # .git/config: ask for a host that can't exist, and when the origin's
+      # answer is that same unbound token, skip the origin. The token then
+      # belongs to the default host, as an explicit GITLAB_TOKEN does.
+      _glab_unbound=""
+      if [ -n "$_glab_origin" ]; then
+        _glab_unbound=$(GLAB_CHECK_UPDATE=false glab config get token --host claude-docker.invalid 2>/dev/null) || true
+      fi
       # Non-empty whenever glab is on PATH (default host always appended), so
       # the expansion is safe under bash 3.2's set -u.
       for _glab_from in "${_glab_hosts[@]}"; do
         _glab_host=$(glab_host_of "$_glab_from")
         [ -n "$_glab_host" ] || continue
         case ", $_glab_tried, " in *", $_glab_host, "*) continue ;; esac
-        _glab_tried="${_glab_tried:+$_glab_tried, }$_glab_host"
         GITLAB_TOKEN=$(GLAB_CHECK_UPDATE=false glab config get token --host "$_glab_host" 2>/dev/null) || true
+        # Not added to _glab_tried: the default host may be the same one, and
+        # there the unbound token is accepted.
+        if [ -n "$GITLAB_TOKEN" ] && [ "$GITLAB_TOKEN" = "$_glab_unbound" ] \
+           && [ "$_glab_from" = "${_glab_hosts[0]}" ] && [ "$_glab_host" = "$_glab_origin" ]; then
+          GITLAB_TOKEN=""
+          continue
+        fi
+        _glab_tried="${_glab_tried:+$_glab_tried, }$_glab_host"
         [ -n "$GITLAB_TOKEN" ] && { _glab_discovered=1; break; }
       done
     fi
@@ -1074,6 +1097,12 @@ discover_tokens() {
             echo "claude-docker: --glab: GitLab host '$_glab_host' is an IP address, which the auth proxy can't intercept by name; use --glab-direct" >&2
             exit 1 ;;
         esac
+        # The host lands in the Caddyfile as the site address and in
+        # --add-host: allow only a hostname with an optional port.
+        if ! [[ "$_glab_host" =~ ^[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+          echo "claude-docker: --glab: GitLab host '$_glab_host' is not a valid host[:port]" >&2
+          exit 1
+        fi
         GLAB_HOST_TOKEN="$GITLAB_TOKEN"
         GLAB_PROXY_HOST="$_glab_host"
       elif [ "$_glab_discovered" = "1" ]; then
@@ -1404,12 +1433,12 @@ stage_glab_proxy_site() {
 
 		@glab_proxy_delete {
 			method DELETE
-			vars_regexp {http.request.uri} ^/+api/v4/(projects|groups)/[^/?]+/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(projects|groups)/+[^/?]+/*(\?.*)?$
 		}
 		respond @glab_proxy_delete "claude-docker glab-proxy policy: project and group deletion is blocked by default. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		@glab_proxy_mint {
 			method POST PUT
-			vars_regexp {http.request.uri} ^/+api/v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens)/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens)(\.json)?/*(\?.*)?$
 		}
 		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating access tokens is blocked by default, since the response would hand a real credential to the container. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		import /etc/caddy/glab-policy.caddy

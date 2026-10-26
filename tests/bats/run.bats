@@ -672,11 +672,49 @@ http_access allow all" ]
   command git init -q "$WS"
   command git -C "$WS" remote add origin http://gitlab.internal/g/p.git
   git() { command git "$@"; }
+  glab() { echo "glab $*" >>"$CALLS"; [ "$3 $5" = "token gitlab.internal" ] && echo "glpat_stub"; return 0; }
   WITH_GLAB=1
   SEEN_PATHS=("$WS")
   run discover_tokens
   [ "$status" -eq 1 ]
   [[ "$output" == *"'http://gitlab.internal/g/p.git' is plain http"*"use --glab-direct"* ]]
+}
+
+@test "discover_tokens: --glab never ties a host-agnostic token to the origin" {
+  # The default stub answers every host, as glab does for GITLAB_ACCESS_TOKEN,
+  # OAUTH_TOKEN or a legacy top-level token.
+  command git init -q "$WS"
+  command git -C "$WS" remote add origin https://github.com/org/repo.git
+  git() { command git "$@"; }
+  WITH_GLAB=1
+  SEEN_PATHS=("$WS")
+  discover_tokens
+  grep -q "glab config get token --host claude-docker.invalid" "$CALLS"
+  [ "$GLAB_HOST_TOKEN" = glpat_stub ]
+  [ "$GLAB_PROXY_HOST" = gitlab.com ]
+  [ "$GITLAB_HOST" = gitlab.com ]
+}
+
+@test "discover_tokens: --glab keeps a token stored for the origin host" {
+  command git init -q "$WS"
+  command git -C "$WS" remote add origin git@gitlab.example.com:g/p.git
+  git() { command git "$@"; }
+  glab() { echo "glab $*" >>"$CALLS"; [ "$3 $5" = "token gitlab.example.com" ] && echo "glpat_origin"; return 0; }
+  WITH_GLAB=1
+  SEEN_PATHS=("$WS")
+  discover_tokens
+  [ "$GLAB_HOST_TOKEN" = glpat_origin ]
+  [ "$GLAB_PROXY_HOST" = gitlab.example.com ]
+}
+
+@test "discover_tokens: --glab refuses a host that isn't host[:port]" {
+  for h in 'gitlab_example.com' 'gl.example.com:abc' 'gl.example.com{' 'gl example.com'; do
+    WITH_GLAB=1 GITLAB_HOST="$h"
+    SEEN_PATHS=("$WS")
+    run discover_tokens
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is not a valid host[:port]"* ]]
+  done
 }
 
 @test "discover_tokens: --glab with no token warns" {
@@ -1586,6 +1624,12 @@ YML
   run_script --ephemeral --aws "$WS" -- --resume
   [ "$status" -eq 0 ]
   grep -q "^docker run --rm -it .*-v $WS:/workspaces/repo .*CLAUDE_DOCKER_FLAGS=aws,ephemeral -w /workspaces/repo claude-code:local claude --resume$" "$CALLS"
+}
+
+@test "main: -- --resume <session-id> reaches claude unchanged" {
+  run_script "$WS" -- --resume 0b5c1e2a-6f3d-4c8e-9a71-2d4f6b8e0c13
+  [ "$status" -eq 0 ]
+  grep -q "^docker run --rm -it .* -w /workspaces/repo claude-code:local claude --resume 0b5c1e2a-6f3d-4c8e-9a71-2d4f6b8e0c13$" "$CALLS"
 }
 
 @test "main: a bad workspace stops before any docker call" {

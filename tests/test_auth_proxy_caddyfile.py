@@ -10,7 +10,8 @@ with those variables set and must come out byte for byte.
 Behavioural half: run.sh's own staging functions write the glab and api site
 config into a temp dir, a real Caddy serves it, and mock upstreams record what
 arrives. Skipped unless a `caddy` binary is on PATH (or named by CADDY_BIN) —
-use the version pinned in run.sh's PROXY_IMAGE. gh's sites listen on :443 and
+use the version pinned in run.sh's PROXY_IMAGE; CI copies it out of that image
+and sets CLAUDE_DOCKER_TEST_REQUIRE_CADDY=1 so a missing binary fails. gh's sites listen on :443 and
 are covered by tests/integration/gh-proxy-integration.sh instead; Docker-level wiring
 (--add-host, env in the agent container) is covered there and in
 tests/bats/run.bats.
@@ -122,16 +123,25 @@ class _Recorder(http.server.BaseHTTPRequestHandler):
 
 
 CADDY = os.environ.get("CADDY_BIN") or shutil.which("caddy")
+# CI sets this so a missing tool fails the run instead of skipping it quietly.
+REQUIRE_CADDY = os.environ.get("CLAUDE_DOCKER_TEST_REQUIRE_CADDY") == "1"
 
 
-@unittest.skipUnless(CADDY, "no caddy binary (set CADDY_BIN or put caddy on PATH)")
+def _missing(reason):
+    if REQUIRE_CADDY:
+        raise RuntimeError(f"{reason}, and CLAUDE_DOCKER_TEST_REQUIRE_CADDY=1 forbids skipping")
+    raise unittest.SkipTest(reason)
+
+
 class SidecarBehaviourTest(unittest.TestCase):
     """glab and api sites, staged by run.sh itself, served by a real Caddy."""
 
     @classmethod
     def setUpClass(cls):
+        if not CADDY:
+            _missing("no caddy binary (set CADDY_BIN or put caddy on PATH)")
         if not shutil.which("openssl"):
-            raise unittest.SkipTest("openssl needed for the private-CA upstream")
+            _missing("openssl needed for the private-CA upstream")
         cls.tmp = tempfile.TemporaryDirectory()
         t = Path(cls.tmp.name)
         cls.pki = t / "pki"
@@ -176,7 +186,7 @@ class SidecarBehaviourTest(unittest.TestCase):
         """Stage via run.sh, rehome /etc/caddy and the api port, start Caddy."""
         work = Path(tempfile.mkdtemp(dir=self.tmp.name))
         caddy_dir = work / "caddy"
-        self.glab_port, self.api_port = _free_port(), _free_port()
+        self.glab_port, self.api_port, http_port = _free_port(), _free_port(), _free_port()
         env = {k: v for k, v in os.environ.items() if not k.startswith(("ANTHROPIC_", "CLAUDE_DOCKER_"))}
         env.update(api_env or {"ANTHROPIC_API_KEY": "sk-real",
                                "ANTHROPIC_BASE_URL": self.api_up + "/gw/"})
@@ -198,6 +208,9 @@ class SidecarBehaviourTest(unittest.TestCase):
             if f.is_file() and f.suffix in (".caddy", "") and f.name != "api-ca.pem":
                 txt = f.read_text().replace("/etc/caddy/", f"{caddy_dir}/")
                 txt = txt.replace("claude-docker-api-proxy:8080", f"claude-docker-api-proxy:{self.api_port}")
+                # The HTTP->HTTPS redirect listener defaults to :80, which an
+                # unprivileged user can't bind.
+                txt = txt.replace("\tskip_install_trust\n", f"\tskip_install_trust\n\thttp_port {http_port}\n")
                 f.write_text(txt)
         # The sidecar image's bundle path; this host's may differ.
         transport = caddy_dir / "api-transport.caddy"
@@ -314,7 +327,8 @@ class SidecarBehaviourTest(unittest.TestCase):
     def test_glab_default_policy_blocks_project_and_group_deletion(self):
         self._start()
         for path in ("/api/v4/projects/123", "/api/v4/projects/123/", "/api/v4/projects/g%2Fsub%2Fp",
-                     "/api/v4/projects/g%2fp?x=1", "//api/v4/groups/42"):
+                     "/api/v4/projects/g%2fp?x=1", "//api/v4/groups/42", "/api/v4//projects/1",
+                     "/api//v4/projects/1", "/api/v4/projects/1.json"):
             with self.subTest(path=path):
                 st, body = self.glab("DELETE", path)
                 self.assertEqual(st, 403)
@@ -342,6 +356,11 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("POST", "//api/v4//personal_access_tokens/self/rotate"),
             ("POST", "/api/v4/projects/123//access_tokens/"),
             ("PUT", "/api/v4/personal_access_tokens/self/rotate"),
+            ("POST", "/api//v4/user/personal_access_tokens"),
+            ("POST", "/api/v4/user/personal_access_tokens.json"),
+            ("POST", "/api/v4/personal_access_tokens/self/rotate.json"),
+            ("POST", "/api/v4/projects/123/access_tokens.json?x=1"),
+            ("POST", "/api/v4/deploy_tokens.json/"),
         )
         for method, path in blocked:
             with self.subTest(method=method, path=path):
