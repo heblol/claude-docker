@@ -57,12 +57,17 @@ ignore:
   # mirror the four npm-tree .trivyignore entries. http-cache-semantics has no
   # patched release per its advisory (GHSA-ch52-4w7c-c8xp), so trivy doesn't
   # gate it, but grype's only-fixed=false does.
+  #
+  # Nothing on a PR runs grype: docker.yml has no pull_request trigger and
+  # ci.yml's trivy gate matches by ID, image-wide. So when a pin refresh moves
+  # a bundled version, these rules stop matching and the first red is the
+  # Docker run on main. On an npm bump, recheck every version below.
   - package:
       name: undici
-      version: 6.28.0
+      version: 6.29.0
       location: "**/node_modules/npm/**"
     reason: >-
-      Bundled by npm 12.2.0 (pinned) at 6.28.0; no npm release carries
+      Bundled by npm 12.2.1 (pinned) at 6.29.0; no npm release carries
       6.29.1 yet. Moves with pins/npm.env.
   - package:
       name: brace-expansion
