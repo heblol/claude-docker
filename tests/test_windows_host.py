@@ -4,7 +4,7 @@
 
 There is no Windows CI (GitHub's windows-latest runners can't run Linux
 containers), so the Windows-only branches of run.sh — MSYS path translation,
-the fixed HOST_UID, safe.directory, the core.autocrlf overlay entry and the
+the fixed HOST_UID, no GIT_CONFIG_* env, the core.autocrlf overlay entry and the
 %APPDATA% credential lookups — are exercised here instead, on Linux, by
 putting stubs ahead of the real tools on PATH:
 
@@ -162,11 +162,10 @@ class GitBashTest(unittest.TestCase):
         self.assertIn("HOST_UID=1000", env)
         self.assertIn("HOST_GID=1000", env)
 
-    def test_safe_directory_scoped_to_workspaces(self):
+    def test_safe_directory_left_to_image(self):
+        # The image's system gitconfig trusts /workspaces/*; no env override.
         env = pairs(self.start(), "-e")
-        self.assertIn("GIT_CONFIG_COUNT=1", env)
-        self.assertIn("GIT_CONFIG_KEY_0=safe.directory", env)
-        self.assertIn("GIT_CONFIG_VALUE_0=/workspaces/*", env)
+        self.assertFalse([e for e in env if e.startswith("GIT_CONFIG_")])
 
     def test_overlay_carries_host_autocrlf(self):
         self.start()

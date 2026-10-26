@@ -264,6 +264,52 @@ check_path_order() {
 }
 
 # ---------------------------------------------------------------------------
+# 3b. git ownership check — the image trusts /workspaces/* and nothing else
+# ---------------------------------------------------------------------------
+
+# Print "ok" when git opens the repo at $1, else git's error. The remaining
+# args are extra env (e.g. a GIT_CONFIG_* set a session might export).
+# GIT_TEST_ASSUME_DIFFERENT_OWNER makes git treat every path as foreign-owned,
+# which is the mismatch the safe.directory entry has to absorb.
+git_opens() {
+  local dir="$1" out
+  shift
+  if out=$(env GIT_TEST_ASSUME_DIFFERENT_OWNER=1 "$@" git -C "$dir" rev-parse --show-toplevel 2>&1); then
+    echo ok
+  else
+    printf '%s\n' "$out" | head -1
+  fi
+}
+
+check_git_trust() {
+  assert_eq "git-safe-directory-system" \
+    "$(git config --system --get-all safe.directory | paste -sd,)" "/workspaces/*"
+
+  local outside
+  outside=$(mktemp -d)
+  git init -q "$outside"
+  case "$(git_opens "$outside")" in
+    *"dubious ownership"*) pass "git-trust: foreign-owned repo outside /workspaces refused" ;;
+    *) fail "git-trust: foreign-owned repo outside /workspaces was not refused" ;;
+  esac
+  rm -rf "$outside"
+
+  if [ "${EXPECT_RO:-0}" = "1" ]; then
+    pass "git-trust-workspace: skipped (EXPECT_RO=1, workspace is :ro)"
+    return
+  fi
+  # Nested two levels, like a .claude/worktrees/<name> checkout.
+  local ws="${WORKSPACE:-/workspaces/smoke}" repo
+  repo=$(mktemp -d "$ws/.git-trust.XXXXXX")
+  git init -q "$repo/nested/repo"
+  assert_eq "git-trust: foreign-owned repo under /workspaces opens" \
+    "$(git_opens "$repo/nested/repo")" "ok"
+  assert_eq "git-trust: survives an exported GIT_CONFIG_* set" \
+    "$(git_opens "$repo/nested/repo" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/elsewhere)" "ok"
+  rm -rf "$repo"
+}
+
+# ---------------------------------------------------------------------------
 # 4. File ownership — write into the workspace, smoke.sh checks host ownership
 # ---------------------------------------------------------------------------
 
@@ -610,6 +656,7 @@ main() {
   check_identity
   check_security
   check_path_order
+  check_git_trust
   check_workspace_write
   check_credentials
   check_aws_state_masking

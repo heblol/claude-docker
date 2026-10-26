@@ -256,11 +256,11 @@ run_script_fn() {
   [ "$IS_MSYS" = 0 ]
 }
 
-@test "detect_msys: Git Bash uses UID 1000 and trusts only /workspaces" {
+@test "detect_msys: Git Bash uses UID 1000 and leaves safe.directory to the image" {
   uname() { echo MINGW64_NT-10.0; }
   detect_msys
   [ "$HOST_UID" = 1000 ] && [ "$HOST_GID" = 1000 ]
-  [[ "$(lines_of "${ENV_ARGS[@]}")" == *$'GIT_CONFIG_KEY_0=safe.directory\n-e\nGIT_CONFIG_VALUE_0=/workspaces/*'* ]]
+  [[ "$(lines_of "${ENV_ARGS[@]}")" != *GIT_CONFIG_* ]]
 }
 
 @test "detect_msys: Linux keeps id -u and adds no git config" {

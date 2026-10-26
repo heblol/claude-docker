@@ -58,6 +58,8 @@ It reads the transcripts in the `claude-code-home` volume, so it reports contain
 
 Files created inside the container appear on the host owned by the user who launched `claude-docker`, not by `root`. The wrapper forwards `HOST_UID` / `HOST_GID` and the in-container entrypoint creates a matching passwd entry and drops to it via `runuser` before exec'ing claude. Persistent state in the `claude-code-root` and `claude-code-home` named volumes is chowned on first start, so an existing volume from before this change is fixed up the next time you run `claude-docker`.
 
+Git's ownership check never refuses a mounted workspace: the image's system git config (`/etc/gitconfig`) sets `safe.directory = /workspaces/*`, which covers every workspace and the worktrees nested in one. Git still refuses a repository elsewhere in the container whose owner differs. Because the setting lives at system scope, exporting `GIT_CONFIG_*` in a session doesn't remove it, and neither does a tool running git with a cleaned environment. You don't need to add `safe.directory` entries to `~/.gitconfig`, and entries left there by older sessions can be deleted.
+
 ## Git worktrees
 
 Git worktrees embed the path between the worktree and its repo's `.git/` in two link files. By default those paths are absolute, so a worktree created on the host breaks inside the container (and vice versa) because the same files sit at different absolute paths in each environment.

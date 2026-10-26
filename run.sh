@@ -363,10 +363,8 @@ detect_msys() {
   if [ "$IS_MSYS" = "1" ]; then
     HOST_UID=1000
     HOST_GID=1000
-    # Those same root-owned NTFS mounts trip git's ownership check ("detected
-    # dubious ownership") in every workspace. GIT_CONFIG_* env is command-line
-    # scope, which git honours for safe.directory; scoped to /workspaces only.
-    ENV_ARGS+=("-e" "GIT_CONFIG_COUNT=1" "-e" "GIT_CONFIG_KEY_0=safe.directory" "-e" "GIT_CONFIG_VALUE_0=/workspaces/*")
+    # Those same root-owned NTFS mounts would trip git's ownership check; the
+    # image's system gitconfig trusts /workspaces/* on every host (Dockerfile).
   else
     HOST_UID=$(id -u)
     HOST_GID=$(id -g)
