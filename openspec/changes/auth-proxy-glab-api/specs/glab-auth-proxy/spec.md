@@ -25,7 +25,7 @@ When `--glab` is passed and a host token is found, the token SHALL be given only
 
 ### Requirement: GitLab host is redirected through the sidecar
 
-The agent container SHALL resolve the GitLab host the token belongs to (the host `--glab` token discovery settled on, with its port) to the sidecar via `--add-host`. For an exported `GITLAB_TOKEN`, that host SHALL be `GITLAB_HOST` when set, else glab's default host, and never the workspace's `origin` host. No other hostname SHALL be redirected for GitLab. The sidecar SHALL terminate TLS for that host on that port with the session CA, the same root `--gh` uses. When the host is plain `http://` (from `GITLAB_HOST` or the `origin` remote) or an IP literal, `run.sh` SHALL exit with an error naming `--glab-direct`.
+The agent container SHALL resolve the proxied GitLab host, with its port, to the sidecar via `--add-host`. No other hostname SHALL be redirected for GitLab. The sidecar SHALL terminate TLS for that host on that port with the session CA, the same root `--gh` uses. When the host is plain `http://` or an IP literal, `run.sh` SHALL exit with an error naming `--glab-direct`. When it is not a `host[:port]`, `run.sh` SHALL exit with an error.
 
 #### Scenario: Redirection is scoped to the discovered host
 
@@ -47,6 +47,17 @@ The agent container SHALL resolve the GitLab host the token belongs to (the host
 - **THEN** `run.sh` exits non-zero with an error suggesting `--glab-direct`
 - **AND** no container starts and the token is not forwarded
 
+#### Scenario: Malformed host is refused
+
+- **GIVEN** a token is found and `GITLAB_HOST` is `evil.example.com/path` or contains a space or a brace
+- **WHEN** user runs `claude-docker --glab ~/repo`
+- **THEN** `run.sh` exits non-zero with an error saying the host is not a valid `host[:port]`
+- **AND** no container starts and the token is not forwarded
+
+### Requirement: Proxied GitLab host is the host the token belongs to
+
+The proxied host SHALL be `GITLAB_HOST` when set, else the host discovery found the token for. A token that is not bound to a host SHALL go to glab's default host (its `host:` key, else `gitlab.com`) and never to the workspace's `origin` host. Unbound tokens are an exported `GITLAB_TOKEN`, and a discovered token that glab returns for any host (`GITLAB_ACCESS_TOKEN`, `OAUTH_TOKEN`, a legacy top-level `token:`).
+
 #### Scenario: Exported token is not proxied for a non-GitLab origin
 
 - **GIVEN** `GITLAB_TOKEN` is exported, `GITLAB_HOST` is unset and the workspace's `origin` is `git@github.com:org/repo.git`
@@ -54,9 +65,22 @@ The agent container SHALL resolve the GitLab host the token belongs to (the host
 - **THEN** the proxied host is glab's default host (`gitlab.com` when glab has none)
 - **AND** `github.com` is not redirected to the sidecar
 
+#### Scenario: Host-agnostic glab token is not proxied for the origin
+
+- **GIVEN** `GITLAB_TOKEN` and `GITLAB_HOST` are unset, host glab answers `GITLAB_ACCESS_TOKEN` for every host, and the workspace's `origin` is `https://github.com/org/repo.git`
+- **WHEN** user runs `claude-docker --glab ~/repo`
+- **THEN** the proxied host is glab's default host
+- **AND** `github.com` is not redirected to the sidecar
+
+#### Scenario: Origin-bound glab token keeps the origin
+
+- **GIVEN** `GITLAB_TOKEN` and `GITLAB_HOST` are unset, host glab stores a token for `gitlab.example.com` only, and the workspace's `origin` is on `gitlab.example.com`
+- **WHEN** user runs `claude-docker --glab ~/repo`
+- **THEN** the proxied host is `gitlab.example.com`
+
 ### Requirement: GitLab credentials are injected per path class
 
-The sidecar SHALL inject `Authorization: Bearer <token>` on paths under `/api/` (REST and GraphQL). It SHALL inject `Authorization: Basic base64(oauth2:<token>)` on git smart-HTTP paths (`info/refs`, `git-upload-pack`, `git-receive-pack`). It SHALL forward every other path with no credential, git-LFS paths (`info/lfs/…`, `gitlab-lfs/…`) included: GitLab's LFS batch response hands a usable credential back to the client, so injecting there would expose one to the container. Git LFS against a private project therefore needs `--glab-direct`.
+The sidecar SHALL inject `Authorization: Bearer <token>` on paths under `/api/` (REST and GraphQL), and `Authorization: Basic base64(oauth2:<token>)` on git smart-HTTP paths (`info/refs`, `git-upload-pack`, `git-receive-pack`). Every other path SHALL be forwarded with no credential, git-LFS paths (`info/lfs/…`, `gitlab-lfs/…`) included, because GitLab's LFS batch response hands a credential back to the client. Git LFS against a private project needs `--glab-direct`.
 
 #### Scenario: glab and git work authenticated
 
@@ -95,7 +119,7 @@ Under `--glab`, whether or not a token was found, the `config.yml` copy mounted 
 
 ### Requirement: GitLab request filtering policy
 
-The sidecar SHALL block project and group deletion on the proxied host by default. Blocked requests are `DELETE`s whose raw, still percent-encoded request URI matches `^/+api/v4/(projects|groups)/[^/?]+/*(\?.*)?$`, so a numeric id and a URL-encoded path are both caught. The sidecar SHALL also block, by default, the REST calls that create or rotate a token and return it: `POST` or `PUT` on `personal_access_tokens/:id/rotate` (`:id` may be `self`), `user/personal_access_tokens`, `users/:id/personal_access_tokens`, `users/:id/impersonation_tokens`, `(projects|groups)/:id/access_tokens` and `.../access_tokens/:id/rotate`, `(projects|groups)/:id/deploy_tokens`, `deploy_tokens`, and `groups/:id/service_accounts/:id/personal_access_tokens` (and its `rotate`), all under `/api/v4/`. These match on the raw request URI too, tolerating repeated slashes, a trailing slash and a query string. Token creation through GraphQL is not filtered. Blocked requests SHALL get a `403` whose body names the claude-docker glab-proxy policy and points at `CLAUDE_DOCKER_GLAB_POLICY` and `--glab-direct`. `CLAUDE_DOCKER_GLAB_POLICY` SHALL name a Caddyfile snippet imported into the GitLab site block. A set but unreadable path SHALL be a startup error.
+The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or group and a REST `POST` or `PUT` that creates or rotates a token, on the proxied host. Matching SHALL run on the raw, still percent-encoded request URI under `/api/v4/`, tolerating repeated slashes, a trailing slash, a `.json` suffix and a query string. Token creation through GraphQL is not filtered. The `403` body SHALL name the claude-docker glab-proxy policy.
 
 #### Scenario: Project deletion is blocked by default
 
@@ -110,20 +134,35 @@ The sidecar SHALL block project and group deletion on the proxied host by defaul
 
 #### Scenario: Token creation and rotation are blocked by default
 
-- **WHEN** `glab api -X POST /personal_access_tokens/self/rotate`, `glab api -X POST /user/personal_access_tokens` or `glab api -X POST /projects/group%2Fp/access_tokens` runs inside the agent container
+- **WHEN** a `POST` or `PUT` under `/api/v4/` runs inside the agent container on any of: `personal_access_tokens/:id/rotate` (`:id` may be `self`), `user/personal_access_tokens`, `users/:id/personal_access_tokens`, `users/:id/impersonation_tokens`, `(projects|groups)/:id/access_tokens` and `.../access_tokens/:id/rotate`, `(projects|groups)/:id/deploy_tokens`, `deploy_tokens`, `groups/:id/service_accounts/:id/personal_access_tokens` and its `rotate`
 - **THEN** the response is `403` naming the claude-docker glab-proxy policy
 - **AND** the request never reaches GitLab
+
+#### Scenario: Path variants are blocked
+
+- **WHEN** `DELETE /api/v4//projects/123`, `DELETE //api//v4/groups/42/`, `POST /api//v4/user/personal_access_tokens.json` or `POST /api/v4/projects/group%2Fp/access_tokens.json?x=1` is sent from the agent container
+- **THEN** each response is `403` and no request reaches GitLab
 
 #### Scenario: Non-destructive requests pass
 
 - **WHEN** `glab mr list`, `glab api /user`, `glab api /personal_access_tokens` and `glab api -X POST /projects/1/issues` run inside the agent container
-- **THEN** both succeed
+- **THEN** all of them succeed
+
+### Requirement: GitLab policy is extensible
+
+`CLAUDE_DOCKER_GLAB_POLICY` SHALL name a Caddyfile snippet imported into the GitLab site block. A set but unreadable path SHALL be a startup error. The default policy's `403` body SHALL point at `CLAUDE_DOCKER_GLAB_POLICY` and `--glab-direct`.
 
 #### Scenario: User-supplied policy extension is honoured
 
 - **GIVEN** `CLAUDE_DOCKER_GLAB_POLICY` points to a snippet blocking `DELETE` on `^/api/v4/projects/[^/]+/repository/branches/.*`
 - **WHEN** a matching request is made from the agent container
 - **THEN** it is answered `403` by the sidecar
+
+#### Scenario: Unreadable policy path fails at startup
+
+- **GIVEN** `CLAUDE_DOCKER_GLAB_POLICY` names a path that doesn't exist
+- **WHEN** user runs `claude-docker --glab ~/repo`
+- **THEN** `run.sh` exits non-zero before any container starts
 
 ### Requirement: GitLab proxy fails closed
 
