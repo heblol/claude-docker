@@ -18,4 +18,8 @@ The failure is costly well beyond git itself. Agents work around it by appending
 
 - Linux/macOS: git no longer refuses a workspace on an ownership mismatch. Every path under `/workspaces` is a directory the user passed to `claude-docker`, and the container can already write it, so trusting its owner adds no access the agent lacks.
 - Windows: same behaviour, delivered by the image instead of the environment.
-- Existing `safe.directory` entries in a warm `claude-code-root` volume are left alone. They become redundant, and the user may delete them.
+- Existing `safe.directory` entries in a warm `claude-code-root` volume are left alone. They become redundant, and the docs tell the user to delete them.
+
+## Open question
+
+This change doesn't explain the macOS failure itself: `stat` showed uid 502 throughout, the same uid git ran as. One candidate is the VM's file-sharing layer reporting a different owner, or failing a stat, which git treats as "not owned", for the worktree or common dir. The image setting makes git accept the workspace whatever the cause.

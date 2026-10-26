@@ -42,6 +42,7 @@ The container narrows blast radius vs. running `claude --yolo` on the host, but 
 - The container starts as root and drops to the host user before exec'ing claude (see [File ownership](usage.md#file-ownership)).
 - The Docker default seccomp profile.
 - Scoped workspace bind-mounts, and tmpfs masks over non-opted-in credential paths.
+- Git's ownership check trusts `/workspaces/*` only (system `safe.directory`). The check guards against running config (`core.fsmonitor`, hooks) from a repo another user owns. Everything under `/workspaces` is a mount you passed and the agent can already write, so the exemption gives a session nothing new. It does not protect you from a hostile repo you cloned yourself, and the check never did that either. Repos elsewhere in the container are still checked.
 
 **Applied at build time:**
 
