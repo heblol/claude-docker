@@ -20,6 +20,8 @@ claude-docker is where Claude Code does the hands-on work, writing code and more
 
 ## Scope
 
+This section describes what claude-docker is today, at the level of categories. Update it when a category is added or dropped, not for each flag.
+
 ### Who it's for
 
 People running Claude Code on their own machine: macOS, Linux or Windows.
@@ -42,5 +44,3 @@ The [README](../README.md) and `claude-docker --help` list the flags.
 - **Agents other than Claude Code.**
 - **Running without Docker or Podman**, or isolating work on host files outside a container.
 - **Per-path filesystem rules inside the container.** A kernel-level sandbox such as [nono](https://github.com/nolabs-ai/nono) can add them in a child image.
-
-This page describes what claude-docker is today, at the level of categories. Update it when a category is added or dropped, not for each flag.
