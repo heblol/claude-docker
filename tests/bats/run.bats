@@ -1246,6 +1246,8 @@ claude-egress-x
 -v
 $stage/egress-managed-settings.json:/etc/claude-code/managed-settings.json:ro" ]
   grep -q '"ANTHROPIC_BASE_URL": "https://llm.example.eu/v1"' "$stage/egress-managed-settings.json"
+  # Written once squid's address is known, so the pin names this session's.
+  grep -q '"HTTPS_PROXY": "http://10.0.0.2:3128"' "$stage/egress-managed-settings.json"
   local env
   env=$(lines_of "${ENV_ARGS[@]}")
   # Whole lines: a no_proxy that also lists e.g. github.com would let that

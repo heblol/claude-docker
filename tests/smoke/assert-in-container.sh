@@ -690,12 +690,13 @@ check_egress() {
     "$(egress_code http_connect https://claude.ai/)" "403"
   # Claude Code's managed settings pin the endpoint over any project setting
   # (tests/integration/managed-settings-precedence.sh proves the precedence). Here: they
-  # are present, name this session's endpoint and switch the other backends
-  # off, and the agent can neither change them nor add a file beside them.
-  local ms=/etc/claude-code/managed-settings.json ms_json
+  # are present, name this session's endpoint and squid (the container's own
+  # proxy env), switch the other backends off, and the agent can neither
+  # change them nor add a file beside them.
+  local ms=/etc/claude-code/managed-settings.json ms_json px="${https_proxy:-}"
   ms_json=$(jq -c '.env' "$ms" 2>/dev/null) || ms_json=""
-  assert_eq "egress-managed: managed settings pin the endpoint, other backends off" "$ms_json" \
-    "{\"ANTHROPIC_BASE_URL\":\"${EXPECT_EGRESS_MANAGED_URL:-}\",\"CLAUDE_CODE_USE_GATEWAY\":\"0\",\"CLAUDE_CODE_USE_BEDROCK\":\"0\",\"CLAUDE_CODE_USE_FOUNDRY\":\"0\",\"CLAUDE_CODE_USE_ANTHROPIC_AWS\":\"0\",\"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD\":\"0\",\"CLAUDE_CODE_USE_MANTLE\":\"0\",\"CLAUDE_CODE_USE_VERTEX\":\"0\"}"
+  assert_eq "egress-managed: managed settings pin the endpoint and proxy env, other backends off" "$ms_json" \
+    "{\"ANTHROPIC_BASE_URL\":\"${EXPECT_EGRESS_MANAGED_URL:-}\",\"http_proxy\":\"$px\",\"https_proxy\":\"$px\",\"HTTP_PROXY\":\"$px\",\"HTTPS_PROXY\":\"$px\",\"no_proxy\":\"localhost,127.0.0.1,::1\",\"NO_PROXY\":\"localhost,127.0.0.1,::1\",\"CLAUDE_CODE_USE_GATEWAY\":\"0\",\"CLAUDE_CODE_USE_BEDROCK\":\"0\",\"CLAUDE_CODE_USE_FOUNDRY\":\"0\",\"CLAUDE_CODE_USE_ANTHROPIC_AWS\":\"0\",\"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD\":\"0\",\"CLAUDE_CODE_USE_MANTLE\":\"0\",\"CLAUDE_CODE_USE_VERTEX\":\"0\"}"
   if ( : >>"$ms" ) 2>/dev/null; then
     fail "egress-managed-ro: the agent can write $ms"
   else
