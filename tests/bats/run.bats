@@ -271,18 +271,18 @@ http_access allow all" ]
 
 @test "gen_egress_managed_settings: under the --api sidecar, pins the sidecar's URL" {
   ANTHROPIC_BASE_URL=https://gw.eu/v1 API_SIDECAR_ACTIVE=1
-  run gen_egress_managed_settings
+  run gen_egress_managed_settings http://10.89.0.2:3128
   [[ "$output" == *'"ANTHROPIC_BASE_URL": "http://claude-docker-api-proxy:8080",'* ]]
   [[ "$output" != *gw.eu* ]]
 }
 
-@test "gen_egress_managed_settings: pins the endpoint and switches the other backends off" {
+@test "gen_egress_managed_settings: pins the endpoint and the proxy env, and switches the other backends off" {
   ANTHROPIC_BASE_URL='https://u:p@gw.eu:8443/v1?a=1&b=%20'
-  run gen_egress_managed_settings
+  run gen_egress_managed_settings http://10.89.0.2:3128
   [ "$status" -eq 0 ]
   # Exactly these keys, as Claude Code reads them: valid JSON, env strings.
   [ "$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), sort_keys=True))')" = \
-    '{"env": {"ANTHROPIC_BASE_URL": "https://u:p@gw.eu:8443/v1?a=1&b=%20", "CLAUDE_CODE_USE_ANTHROPIC_AWS": "0", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD": "0", "CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_USE_FOUNDRY": "0", "CLAUDE_CODE_USE_GATEWAY": "0", "CLAUDE_CODE_USE_MANTLE": "0", "CLAUDE_CODE_USE_VERTEX": "0"}}' ]
+    '{"env": {"ANTHROPIC_BASE_URL": "https://u:p@gw.eu:8443/v1?a=1&b=%20", "CLAUDE_CODE_USE_ANTHROPIC_AWS": "0", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD": "0", "CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_USE_FOUNDRY": "0", "CLAUDE_CODE_USE_GATEWAY": "0", "CLAUDE_CODE_USE_MANTLE": "0", "CLAUDE_CODE_USE_VERTEX": "0", "HTTPS_PROXY": "http://10.89.0.2:3128", "HTTP_PROXY": "http://10.89.0.2:3128", "NO_PROXY": "localhost,127.0.0.1,::1", "http_proxy": "http://10.89.0.2:3128", "https_proxy": "http://10.89.0.2:3128", "no_proxy": "localhost,127.0.0.1,::1"}}' ]
 }
 
 @test "validate_opts: missing CLAUDE_DOCKER_AZ_CA is fatal" {

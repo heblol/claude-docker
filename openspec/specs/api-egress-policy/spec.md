@@ -102,7 +102,7 @@ Under `--egress-lock`, `run.sh` SHALL exit 1 before creating any container resou
 
 ### Requirement: Claude Code's endpoint can't be moved by the workspace
 
-Under `--egress-lock`, `run.sh` SHALL refuse an `ANTHROPIC_BASE_URL` with any character outside RFC 3986's unreserved, reserved (except `[` and `]`) and `%`. It SHALL mount Claude Code managed settings read-only at `/etc/claude-code/managed-settings.json` whose `env` sets `ANTHROPIC_BASE_URL` to the session's endpoint (under `--api`, to `http://claude-docker-api-proxy:8080`, the auth-proxy sidecar whose only upstream is that endpoint) and every `CLAUDE_CODE_USE_*` switch that selects a model backend to `0`: `CLAUDE_CODE_USE_GATEWAY`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD`, `CLAUDE_CODE_USE_MANTLE` and `CLAUDE_CODE_USE_VERTEX` as of Claude Code 2.1.302. Sessions without `--egress-lock` SHALL NOT get this file. CI SHALL fail when the image's Claude Code knows a `CLAUDE_CODE_USE_*` switch that is neither pinned off nor listed as selecting no backend.
+Under `--egress-lock`, `run.sh` SHALL refuse an `ANTHROPIC_BASE_URL` with any character outside RFC 3986's unreserved, reserved (except `[` and `]`) and `%`. It SHALL mount Claude Code managed settings read-only at `/etc/claude-code/managed-settings.json` whose `env` sets `ANTHROPIC_BASE_URL` to the session's endpoint (under `--api`, to `http://claude-docker-api-proxy:8080`, the auth-proxy sidecar whose only upstream is that endpoint) and every `CLAUDE_CODE_USE_*` switch that selects a model backend to `0`: `CLAUDE_CODE_USE_GATEWAY`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD`, `CLAUDE_CODE_USE_MANTLE` and `CLAUDE_CODE_USE_VERTEX` as of Claude Code 2.1.302. The same `env` SHALL set `http_proxy`, `https_proxy`, `HTTP_PROXY` and `HTTPS_PROXY` to the session's squid and `no_proxy` and `NO_PROXY` to loopback only, so a project can't take Claude Code's model requests off the proxy. Sessions without `--egress-lock` SHALL NOT get this file. CI SHALL fail when the image's Claude Code knows a `CLAUDE_CODE_USE_*` switch that is neither pinned off nor listed as selecting no backend.
 
 #### Scenario: A project setting doesn't move the model traffic
 
@@ -121,6 +121,12 @@ Under `--egress-lock`, `run.sh` SHALL refuse an `ANTHROPIC_BASE_URL` with any ch
 - **GIVEN** an `--api --egress-lock` session
 - **WHEN** the agent reads `/etc/claude-code/managed-settings.json`
 - **THEN** its `ANTHROPIC_BASE_URL` is `http://claude-docker-api-proxy:8080`, not the host's endpoint
+
+#### Scenario: A project can't take the model requests off the proxy
+
+- **GIVEN** an `--api --egress-lock` session in a project whose `.claude/settings.json` sets `NO_PROXY=claude-docker-api-proxy`, or an empty `HTTPS_PROXY`
+- **WHEN** Claude Code sends a model request
+- **THEN** it goes through squid to the auth-proxy sidecar, and the saved squid log lists it
 
 #### Scenario: The agent can't change the managed settings
 

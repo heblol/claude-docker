@@ -252,6 +252,8 @@ proxy_ip=""
 # nothing else; add others if a tool in the image gains a model backend.
 EGRESS_LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-docker/egress"
 EGRESS_MODEL_PROVIDERS=".anthropic.com .claude.ai .claude.com"
+# Loopback is the only thing that bypasses squid (env and managed settings).
+EGRESS_NO_PROXY="localhost,127.0.0.1,::1"
 EGRESS_NETWORK=""
 EGRESS_OUT_NETWORK=""
 EGRESS_SIDECAR=""
@@ -652,14 +654,23 @@ EOF
 # Code release adds one this list lacks. Mounted read-only; the agent
 # can't replace it, and /etc/claude-code is root's. ANTHROPIC_BASE_URL has
 # passed validate_opts' URL character check, so it needs no JSON escaping.
+# $1 is squid's URL. The proxy env is pinned along with the endpoint: a
+# project that sets NO_PROXY=claude-docker-api-proxy, or an empty
+# HTTPS_PROXY, would send the model requests straight to the auth-proxy
+# sidecar, still to the endpoint but missing from the saved squid log.
 gen_egress_managed_settings() {
-  local url="$ANTHROPIC_BASE_URL"
+  local url="$ANTHROPIC_BASE_URL" proxy="$1" var
   # Under --api Claude Code talks to the auth-proxy sidecar, which holds the
   # real endpoint; pinning that here would skip the sidecar and send the
   # placeholder credential to the gateway.
   [ "$API_SIDECAR_ACTIVE" = "1" ] && url="http://claude-docker-api-proxy:8080"
   printf '{\n  "env": {\n'
   printf '    "ANTHROPIC_BASE_URL": "%s",\n' "$url"
+  for var in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY; do
+    printf '    "%s": "%s",\n' "$var" "$proxy"
+  done
+  printf '    "no_proxy": "%s",\n' "$EGRESS_NO_PROXY"
+  printf '    "NO_PROXY": "%s",\n' "$EGRESS_NO_PROXY"
   printf '    "CLAUDE_CODE_USE_GATEWAY": "0",\n'
   printf '    "CLAUDE_CODE_USE_BEDROCK": "0",\n'
   printf '    "CLAUDE_CODE_USE_FOUNDRY": "0",\n'
@@ -1788,7 +1799,6 @@ start_egress_sidecar() {
     done
     ensure_egress_image
     gen_egress_squid_conf >"$stage/egress-squid.conf" || exit 1
-    gen_egress_managed_settings >"$stage/egress-managed-settings.json" || exit 1
     agent_image_id=$("$RUNTIME" image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || echo unknown)
     egress_proxy_image_id=$("$RUNTIME" image inspect --format '{{.Id}}' "$EGRESS_IMAGE" 2>/dev/null || echo unknown)
     started=$(date -u +%Y%m%dT%H%M%SZ)
@@ -1840,12 +1850,13 @@ start_egress_sidecar() {
     # proxy. GitHub deliberately does NOT bypass it under --gh: no_proxy=github.com
     # would also match codeload.github.com, which has no direct route.
     egress_url="http://$egress_ip:3128"
+    gen_egress_managed_settings "$egress_url" >"$stage/egress-managed-settings.json" || exit 1
     MOUNT_ARGS+=("--network" "$EGRESS_NETWORK"
       "-v" "$(hostpath "$stage/egress-managed-settings.json"):/etc/claude-code/managed-settings.json:ro")
     ENV_ARGS+=(
       "-e" "http_proxy=$egress_url" "-e" "https_proxy=$egress_url"
       "-e" "HTTP_PROXY=$egress_url" "-e" "HTTPS_PROXY=$egress_url"
-      "-e" "no_proxy=localhost,127.0.0.1,::1" "-e" "NO_PROXY=localhost,127.0.0.1,::1"
+      "-e" "no_proxy=$EGRESS_NO_PROXY" "-e" "NO_PROXY=$EGRESS_NO_PROXY"
       # Telemetry, error reports and the updater: Anthropic hosts the proxy
       # refuses anyway. Off, so they don't fill the log with denied requests.
       "-e" "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"

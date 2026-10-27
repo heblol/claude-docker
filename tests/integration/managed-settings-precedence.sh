@@ -6,11 +6,14 @@
 # --egress-lock managed settings (run.sh: gen_egress_managed_settings) beat
 # every way a project can move the model traffic? (openspec: api-egress-policy)
 #
-# Runs the image with --network none and two loopback logging servers: the
-# managed settings point Claude Code at :9001, each project override at :9002.
-# A case passes when a model request reaches :9001 and none reaches :9002. A
-# control run of every case without the managed settings must reach :9002, or
-# the harness proves nothing. The managed run also fails on any backend switch
+# Runs the image with --network none and two loopback logging servers. In the
+# endpoint suite the managed settings point Claude Code at :9001, each project
+# override at :9002. In the proxy suite Claude Code talks to the auth-proxy
+# sidecar's name (mapped to loopback, :9002) through squid's place (:9001), as
+# under --api, and each override tries to skip the proxy. A case passes when a
+# model request reaches :9001 and none reaches :9002. A control run of every
+# case without the managed settings must reach :9002, or the harness proves
+# nothing. The managed run also fails on any backend switch
 # in the bundle that the managed settings don't pin off. CI runs it on every
 # PR, the claude-code pin refresh included: precedence and the set of backends
 # are Claude Code's, not ours.
@@ -23,14 +26,21 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# The settings run.sh writes, from run.sh itself.
-ANTHROPIC_BASE_URL=http://127.0.0.1:9001 bash -c \
-  'source "$1"; gen_egress_managed_settings' _ "$REPO/run.sh" >"$TMP/managed-settings.json"
+# The settings run.sh writes, from run.sh itself. Loopback bypasses the proxy
+# (EGRESS_NO_PROXY), so the endpoint suite never meets :9003, and the proxy
+# suite's endpoint is the sidecar's name, as under --api.
+gen() {
+  ANTHROPIC_BASE_URL="$1" bash -c \
+    'source "$1"; gen_egress_managed_settings "$2"' _ "$REPO/run.sh" "$2"
+}
+gen http://127.0.0.1:9001 http://127.0.0.1:9003 >"$TMP/managed-endpoint.json"
+gen http://claude-docker-api-proxy:9002 http://127.0.0.1:9001 >"$TMP/managed-proxy.json"
 
 cat >"$TMP/in-container.sh" <<'IN'
 #!/usr/bin/env bash
 set -uo pipefail
 mode="$1"   # managed | control
+suite="$2"  # endpoint | proxy
 W=/tmp/precedence
 mkdir -p "$W"
 cat >"$W/srv.js" <<'JS'
@@ -50,6 +60,18 @@ node "$W/srv.js" 9002 "$W/9002.log" & s2=$!
 trap 'kill "$s1" "$s2" 2>/dev/null' EXIT
 sleep 1
 
+# The env run.sh gives the agent container. In the proxy suite :9001 stands in
+# for squid: it gets the absolute-form request a proxied client sends.
+if [ "$suite" = "proxy" ]; then
+  echo "127.0.0.1 claude-docker-api-proxy" >>/etc/hosts
+  run_env=(ANTHROPIC_BASE_URL=http://claude-docker-api-proxy:9002
+    http_proxy=http://127.0.0.1:9001 https_proxy=http://127.0.0.1:9001
+    HTTP_PROXY=http://127.0.0.1:9001 HTTPS_PROXY=http://127.0.0.1:9001
+    no_proxy=localhost,127.0.0.1,::1 NO_PROXY=localhost,127.0.0.1,::1)
+else
+  run_env=(ANTHROPIC_BASE_URL=http://127.0.0.1:9001)
+fi
+
 over='"ANTHROPIC_BASE_URL":"http://127.0.0.1:9002"'
 fails=0
 # case <name> <settings file under .claude/, or --settings> <env json>
@@ -65,7 +87,7 @@ check() {
   fi
   : >"$W/9001.log"; : >"$W/9002.log"
   (cd "$dir/proj" && exec env -i HOME="$dir/home" PATH="$PATH" ANTHROPIC_API_KEY=sk-fake \
-     ANTHROPIC_BASE_URL=http://127.0.0.1:9001 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+     "${run_env[@]}" CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
      claude ${args[@]+"${args[@]}"} -p hi >"$dir/out" 2>&1) &
   local pid=$!
   # Stop at the first model request, wherever it lands; 60s budget.
@@ -111,6 +133,11 @@ check_switches() {
 
 # Both modes run every case: the control proves each override, backends
 # included, really moves the traffic without managed settings.
+if [ "$suite" = "proxy" ]; then
+  check no-proxy    settings.json '"NO_PROXY":"claude-docker-api-proxy","no_proxy":"claude-docker-api-proxy"'
+  check empty-proxy settings.json '"HTTP_PROXY":"","http_proxy":"","HTTPS_PROXY":"","https_proxy":""'
+  exit "$fails"
+fi
 [ "$mode" = "managed" ] && check_switches
 check settings       settings.json       "$over"
 check settings-local settings.local.json "$over"
@@ -127,15 +154,17 @@ IN
 chmod +x "$TMP/in-container.sh"
 
 run_mode() {
-  local mode="$1" mount=()
-  [ "$mode" = "managed" ] && mount=(-v "$TMP/managed-settings.json:/etc/claude-code/managed-settings.json:ro")
+  local mode="$1" suite="$2" mount=()
+  [ "$mode" = "managed" ] && mount=(-v "$TMP/managed-$suite.json:/etc/claude-code/managed-settings.json:ro")
   docker run --rm --network none --user 0 --entrypoint bash \
     -v "$TMP/in-container.sh:/precedence.sh:ro" ${mount[@]+"${mount[@]}"} \
-    "$IMAGE" /precedence.sh "$mode"
+    "$IMAGE" /precedence.sh "$mode" "$suite"
 }
 
 rc=0
-run_mode control || rc=1
-run_mode managed || rc=1
+for suite in endpoint proxy; do
+  run_mode control "$suite" || rc=1
+  run_mode managed "$suite" || rc=1
+done
 [ "$rc" = 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"
 exit "$rc"
