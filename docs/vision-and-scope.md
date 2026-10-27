@@ -9,9 +9,9 @@ claude-docker is where Claude Code does the hands-on work, writing code and more
 ## Principles
 
 - **Narrow the blast radius, don't claim a sandbox.** The container limits what a session can reach on your machine. It is not a full sandbox, and every trade-off is written down in the [threat model](security.md#threat-model).
-- **A fixed baseline that no flag weakens.** The agent runs as a non-root user, without usable capabilities.
+- **No flag weakens the container's hardening.** Options add access, such as credentials or endpoints, never privileges inside the container.
 - **Open and lean by default.** Your Claude Code setup comes along, the network is open, and the image ships a small set of pinned tools. No host credentials come along, and nothing project-specific is added.
-- **Everything else is opt-in, per integration.** Credentials, model backends and stricter session modes each sit behind their own flag.
+- **Everything else is opt-in, per integration.** Credentials, model backends and session modes each sit behind their own flag.
 - **Tools for the agent, not runtimes for your project.** The image carries the tools the agent needs to work with code, Git forges and clouds. Your project's language runtimes are fetched per project (Terraform, Python) or go in a child image. Node ships because Claude Code needs it.
 - **Add capability only when it's needed.** A new tool or integration goes into the base image when the child image isn't a reasonable route.
 - **Decide together.** New capability and changes to this page are discussed openly and decided by consent of the maintainers.
@@ -30,7 +30,6 @@ People running Claude Code on their own machine: macOS, Linux or Windows.
 
 | Layer | What it covers |
 |---|---|
-| Always on | The agent runs as a non-root user (when the host user isn't root) with no usable capabilities and `no-new-privileges`. |
 | Default | No host credentials. Your Claude Code setup (skills, agents, commands, themes, `CLAUDE.md`, statusline) read-only, plus a settings file of your choice copied in at start. The workspaces you pass in, read-write. Open network. Login and history persist between sessions. Claude Code asks before it acts. |
 | Options | Credentials per integration (Git forges, clouds, package registries). A custom model endpoint. Read-only workspaces. Sessions that keep nothing. Unattended mode. Terminal split panes and alternate Claude config dirs. Your own image built on top of this one. |
 
