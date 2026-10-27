@@ -16,7 +16,7 @@ claude-docker is where Claude Code does the hands-on work, writing code and more
 - **Add capability only when it's needed.** A new tool or integration goes into the base image when the child image isn't a reasonable route.
 - **Decide together.** New capability and changes to this page are discussed openly and decided by consent of the maintainers.
 - **Keep up with Claude Code.** A weekly job proposes refreshed pins, Claude Code included, so the agent works with current releases.
-- **Build it the way it's meant to be used.** Behaviour changes are proposed and reviewed as intent and behaviour ([OpenSpec](../openspec/specs/)), before code.
+- **Build it the way it's meant to be used.** Changes are reviewed as intent and behaviour ([OpenSpec](../openspec/specs/)). A significant change has its OpenSpec change reviewed before the code is written. A smaller behaviour change brings its OpenSpec change and the code in one PR. Bug fixes and documentation updates need no OpenSpec change.
 
 ## Scope
 
