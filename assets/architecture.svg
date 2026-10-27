@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1160" height="715" viewBox="0 0 1160 715" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title>claude-docker architecture</title>
-  <desc>You give a task to Claude Code, which runs inside the claude-docker container on your machine with your mounted workspace and config. It talks to one model backend (a gateway such as LiteLLM via --api, or the Anthropic API directly) and to your Git forge (Azure DevOps, GitLab or GitHub).</desc>
+  <desc>You give a task to Claude Code, which runs in the claude-docker container on your machine with your mounted workspace and opt-in config. It talks to one model backend (a gateway such as LiteLLM via --api, or the Anthropic API directly) and to your Git forge (Azure DevOps via --az, GitLab via --glab, GitHub via --gh). The container sees only the directories you pass in, gets host credentials only with an opt-in flag, and is removed when the session ends.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#4a5361"/>
