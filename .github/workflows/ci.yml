@@ -75,12 +75,6 @@ jobs:
         # Signature + soak gate for every npm-pinned tool; see the script header.
         run: bash scripts/audit-npm-pins.sh
 
-      - name: Markdown lint (advisory)
-        uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
-        continue-on-error: true
-        with:
-          globs: "**/*.md"
-
   docker-build:
     name: Docker build (validate, no push)
     needs: [validate]
