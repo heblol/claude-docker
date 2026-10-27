@@ -36,6 +36,10 @@ most often missed:
   archived; fix the delta and re-archive.
 - **Run the [local checks](CONTRIBUTING.md#local-checks-before-opening-a-pr)**
   before opening a PR.
+- **Measure new capability against [Vision and scope](docs/vision-and-scope.md).**
+  A new tool, integration or default needs real demand and no reasonable
+  child-image route, and lands as an option rather than a change to the default.
+  Update that page when a change adds or drops a whole category.
 - **Keep the container's security posture intact** — the privilege-drop,
   capability set, and credential opt-in model are load-bearing (see [Threat
   model](docs/security.md#threat-model)).
