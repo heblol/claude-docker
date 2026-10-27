@@ -932,6 +932,20 @@ http_access allow all" ]
   [ -s "$EGRESS_LOG_DIR/20260101T000000Z-abc.meta" ]
 }
 
+@test "egress_save_log: a failed copy names the engine's error, not squid's last stderr line" {
+  egress_started=20260101T000000Z proxy_sid=abc EGRESS_SIDECAR=claude-egress-proxy-abc egress_ready=1
+  docker() {
+    echo "2026/01/01 00:00:00| Accepting HTTP Socket connections at conn1 local=[::]:3128" >&2
+    echo "Error response from daemon: configured logging driver does not support reading" >&2
+    echo "2026/01/01 00:00:09| Squid Cache (Version 7.6): Exiting normally." >&2
+    return 1
+  }
+  run egress_save_log
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'docker logs' failed (exit 1): Error response from daemon: configured logging driver does not support reading"* ]]
+  [[ "$output" != *"Exiting normally"* ]]
+}
+
 @test "egress_save_log: a proxy that never got ready isn't held to the startup line" {
   egress_started=20260101T000000Z proxy_sid=abc EGRESS_SIDECAR=claude-egress-proxy-abc
   STUB_LOGS=""

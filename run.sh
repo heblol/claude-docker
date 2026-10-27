@@ -725,7 +725,7 @@ ensure_egress_image() {
 # bind-mount squid's access_log to the host if that matters.
 egress_save_log() {
   [ -n "${egress_started:-}" ] || return 0
-  local base="$EGRESS_LOG_DIR/$egress_started-$proxy_sid" denied old_umask errs copy_rc=0
+  local base="$EGRESS_LOG_DIR/$egress_started-$proxy_sid" denied old_umask errs reason copy_rc=0
   mkdir -p "$EGRESS_LOG_DIR" && chmod 700 "$EGRESS_LOG_DIR" || return 0
   old_umask=$(umask)
   umask 077
@@ -742,7 +742,11 @@ egress_save_log() {
     | sort -u | tr '\n' ' ') || true
   [ -n "$denied" ] && echo "claude-docker: egress proxy blocked: ${denied}" >&2
   if [ "$copy_rc" != "0" ]; then
-    echo "claude-docker: the egress log in $base.log is missing or incomplete: '$RUNTIME logs' failed (exit $copy_rc): ${errs##*$'\n'}" >&2
+    # errs holds squid's own stderr too; docker's and podman's errors start
+    # with "Error", squid's lines with a timestamp.
+    reason=$(printf '%s\n' "$errs" | grep '^Error' | tail -1) || true
+    [ -n "$reason" ] || reason=${errs##*$'\n'}
+    echo "claude-docker: the egress log in $base.log is missing or incomplete: '$RUNTIME logs' failed (exit $copy_rc): $reason" >&2
   elif [ -n "$egress_ready" ] && [[ "$errs" != *'Accepting HTTP Socket connections'* ]] \
        && ! grep -q 'Accepting HTTP Socket connections' "$base.log"; then
     echo "claude-docker: the egress log in $base.log is incomplete: squid's startup line is gone, so the engine's log driver rotated or dropped the start of the session (check its max-size)" >&2
