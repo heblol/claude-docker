@@ -304,32 +304,41 @@ jobs:
           exit-code: 1
           trivyignores: .trivyignore
 
-      # The same policy again with grype and .grype.yaml, the scanner and rules
-      # docker.yml applies before it publishes. The two accept findings
-      # differently (.trivyignore by ID, image-wide; .grype.yaml by package,
-      # version and location), so a change can satisfy Trivy and still fail the
-      # publish scan: npm 12.2.1 moving its bundled undici out of a
-      # version-scoped rule did exactly that, and the first red was main.
-      # Same scan-action commit as mcvs-docker-action uses, with the grype
-      # version left at that commit's default as there, so both run one grype.
-      # A finding gates the merge unless BOTH files accept it, so .trivyignore's
-      # mandatory expiry still bounds every accepted risk.
-      - name: Vulnerability scan (grype) — HIGH/CRITICAL, advisory (includes unfixed)
+      # docker.yml's publish scan, run here before the merge. It uses grype with
+      # .grype.yaml, which accepts findings differently from Trivy
+      # (.trivyignore by ID, image-wide; .grype.yaml by package, version and
+      # location), so a change can satisfy Trivy and still fail the publish
+      # scan: npm 12.2.1 moving its bundled undici out of a version-scoped rule
+      # did exactly that, and the first red was main.
+      #
+      # These two steps mirror mcvs-docker-action's: the same scan-action commit
+      # with its default grype, the image and the repo checkout, and the
+      # action's hardcoded severity-cutoff=high and only-fixed=false. So unlike
+      # Trivy's gate, these also fail on a finding with no fix: publish would
+      # fail on it too. Accept such a finding in .grype.yaml. tests/
+      # test_grype_gate.py checks the two workflows agree; bump the SHA together
+      # with docker.yml's mcvs-docker-action (docs/maintenance.md).
+      #
+      # A fixable finding must pass both gates, so it needs a .trivyignore entry
+      # (reason + expiry) as well as a .grype.yaml rule when both scanners
+      # report it. A finding only grype reports is bounded by .grype.yaml alone,
+      # which has no expiry.
+      - name: Vulnerability scan (grype) — image, HIGH/CRITICAL incl. unfixed (gate)
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: claude-docker:ci
           config: .grype.yaml
           severity-cutoff: high
           only-fixed: false
-          fail-build: false
+          fail-build: true
           output-format: table
 
-      - name: Vulnerability scan (grype) — HIGH/CRITICAL with a fix available (gate)
+      - name: Vulnerability scan (grype) — repo checkout, HIGH/CRITICAL incl. unfixed (gate)
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
-          image: claude-docker:ci
+          path: .
           config: .grype.yaml
           severity-cutoff: high
-          only-fixed: true
+          only-fixed: false
           fail-build: true
           output-format: table
