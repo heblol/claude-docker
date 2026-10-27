@@ -5,6 +5,13 @@
 
 <img src="./assets/logos/claude-docker.png" width="250"></a>
 
+**claude-docker runs [Claude Code](https://code.claude.com/docs) in a container on your machine.** You give it a task and the repositories it may work on. Claude Code reads and edits the code there, runs tools, and opens issues and pull requests on your Git forge, using your own model backend: the Anthropic API, or a gateway such as LiteLLM. The rest of your machine stays out of reach: the agent sees only the directories you pass in, no host credentials unless you pass a flag for them, and the container is removed when the session ends. That makes it a safer place to let the agent work unattended than running `claude --yolo` on your host.
+
+<img src="./assets/architecture.png" alt="claude-docker architecture: you give a task to Claude Code inside the claude-docker container, which holds your mounted workspace and config. It talks to one model backend (a LiteLLM proxy or the Anthropic API) and to your Git forge (Azure DevOps Server, GitLab or GitHub)." width="800">
+
+> [!WARNING]
+> **The diagram's egress control isn't available yet.** Today a session can reach any host on the network, not only your model endpoint and Git forges. [#101](https://github.com/schubergphilis/claude-docker/pull/101) adds `--egress-lock`, which limits model traffic to your `--api` endpoint. See the [threat model](docs/security.md#threat-model) for what the container does and doesn't protect.
+
 Run Claude Code in a container that inherits your setup but not your filesystem. Workspace access is scoped to the directories you pass in; your statusline, skills, agents, and slash commands ride along as read-only bind-mounts. CLI tools are preinstalled (`gh`, `glab`, `aws`, `az` with the `azure-devops` extension, `openspec`, `uv`, `pnpm`, `tfenv`, `git-lfs`, `task`) plus a version-pinned Go toolchain (`go`) — other language runtimes are not: `tfenv` and `uv` fetch your project-pinned Terraform / Python on demand. Host credentials (`gh`, `glab`, `aws`, `tfe`, `az`) are opt-in per flag; nothing leaks in by default.
 
 The VCS and cloud CLIs (`gh`, `glab`, `aws`, `az`) need a flag to see host credentials — see [Credential opt-in](#credential-opt-in). The rest work out of the box.
