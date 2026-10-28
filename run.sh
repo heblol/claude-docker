@@ -1067,9 +1067,9 @@ CADDY
 # on git smart-HTTP, nothing anywhere else (web UI paths don't serve glab or
 # git). Not on LFS either: the batch response echoes a usable credential back
 # to the client (actions.*.header.Authorization). The default policy blocks
-# project/group deletion and the REST calls that hand out a credential that
-# outlives the session: tokens, SSH/GPG/deploy keys, runner and trigger
-# tokens. Best effort: GraphQL is not filtered, and token scope is the real
+# project/group deletion and the REST calls that grant access that outlives
+# the session: tokens, SSH/GPG/deploy keys, runner, trigger and cluster-agent
+# tokens, and project/group members and invitations. Best effort: GraphQL is not filtered, and token scope is the real
 # limit. Both match the raw request URI: path_regexp sees the decoded path, so
 # a URL-encoded project path (group%2Fproject) would slip past it. A raw match
 # can be dodged by percent-encoding a letter (/api/v4/%70rojects/1), which
@@ -1079,7 +1079,10 @@ CADDY
 # Rack::MethodOverride turns a POST carrying _method=delete or
 # X-HTTP-Method-Override: DELETE into a DELETE. The only POSTs on a bare
 # project or group path are the imports, which are let through. Request
-# headers are dropped from the access log.
+# An absolute-form request target (DELETE https://host/api/...) keeps the
+# scheme and host in the raw URI, so the anchored matches would miss it while
+# the path still gets the token: it is refused first. Request headers are
+# dropped from the access log.
 stage_glab_proxy_site() {
   if [ -n "${CLAUDE_DOCKER_GLAB_POLICY:-}" ]; then
     cp "$CLAUDE_DOCKER_GLAB_POLICY" "$1/glab-policy.caddy" || exit 1
@@ -1098,6 +1101,10 @@ stage_glab_proxy_site() {
 	}
 
 	route {
+		@glab_proxy_absolute {
+			not vars_regexp {http.request.uri} ^/
+		}
+		respond @glab_proxy_absolute "claude-docker glab-proxy policy: an absolute-form request target is refused, since it would slip past the policy below. Send an origin-form request, or bypass the proxy entirely with --glab-direct." 403
 		request_header -Authorization
 		request_header -PRIVATE-TOKEN
 		request_header -JOB-TOKEN
@@ -1123,9 +1130,9 @@ stage_glab_proxy_site() {
 		respond @glab_proxy_delete "claude-docker glab-proxy policy: project and group deletion is blocked by default. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		@glab_proxy_mint {
 			method POST PUT
-			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token)(\.json)?/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys)(\.json)?/*(\?.*)?$
 		}
-		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, or adding SSH, GPG or deploy keys, is blocked by default, since it would hand the container a credential that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding SSH, GPG or deploy keys, and adding or changing members is blocked by default, since it would grant access that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		import /etc/caddy/glab-policy.caddy
 
 		reverse_proxy {$GLAB_PROXY_UPSTREAM}
@@ -1144,7 +1151,7 @@ CADDY
 # staged depends on which variable the host set, and a header the host gave no
 # value for is removed, so a claude.ai OAuth bearer from the volume never
 # reaches the gateway. CLAUDE_DOCKER_API_CA joins the public roots (not
-# replaces them) for the upstream connection.
+# replaces them) for an https upstream connection.
 stage_api_proxy_site() {
   local api_base api_rest
   api_base="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
@@ -1172,7 +1179,9 @@ stage_api_proxy_site() {
     echo 'request_header -Authorization' >>"$1/api-cred.caddy" || exit 1
   fi
 
-  if [ -n "${CLAUDE_DOCKER_API_CA:-}" ]; then
+  # Caddy rejects TLS transport settings on an http:// upstream, and a CA has
+  # nothing to verify there.
+  if [ -n "${CLAUDE_DOCKER_API_CA:-}" ] && [ "${API_PROXY_UPSTREAM%%://*}" = "https" ]; then
     cp "$CLAUDE_DOCKER_API_CA" "$1/api-ca.pem" || exit 1
     cat <<'CADDY' >"$1/api-transport.caddy" || exit 1
 transport http {

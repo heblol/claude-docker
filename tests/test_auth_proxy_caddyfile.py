@@ -73,6 +73,20 @@ class ConstantConfigTest(unittest.TestCase):
         self.assertIn("{env.GLAB_PROXY_BEARER}", found["sites/glab.caddy"])
         self.assertIn("import /etc/caddy/sites/*.caddy", found["Caddyfile"])
 
+    def test_api_ca_transport_only_for_an_https_upstream(self):
+        with tempfile.TemporaryDirectory() as d:
+            ca = Path(d) / "ca.pem"
+            ca.write_text("x")
+            for base, staged in (("https://gw.internal/a", True), ("http://gw.internal:8000", False)):
+                with self.subTest(base=base):
+                    out = Path(d) / base.split(":")[0]
+                    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                           "ANTHROPIC_BASE_URL": base, "CLAUDE_DOCKER_API_CA": str(ca)}
+                    subprocess.run(["bash", "-c", 'source "$1"; stage_proxy_root "$2"; stage_api_proxy_site "$2"',
+                                    "_", str(RUN_SH), str(out)], env=env, check=True)
+                    self.assertEqual("tls_trust_pool" in (out / "api-transport.caddy").read_text(), staged)
+                    self.assertEqual((out / "api-ca.pem").exists(), staged)
+
     def test_credential_lines_are_literals(self):
         lines = re.findall(r"echo (\S.*?) >>\"\$1/api-cred\.caddy\"", RUN_SH.read_text())
         self.assertEqual(len(lines), 4)
@@ -345,6 +359,18 @@ class SidecarBehaviourTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.glab("POST", path)[0], 200)
 
+    def test_glab_default_policy_refuses_an_absolute_form_target(self):
+        # The raw URI then starts with the scheme, so the anchored matches would
+        # miss it while the parsed path still gets the token.
+        self._start()
+        for method, target in (("DELETE", "https://gl.example.test/api/v4/projects/1"),
+                               ("POST", "https://gl.example.test/api/v4/user/personal_access_tokens"),
+                               ("GET", "https://gl.example.test/api/v4/user")):
+            with self.subTest(method=method, target=target):
+                st, body = self.glab(method, target)
+                self.assertEqual(st, 403)
+                self.assertIn("claude-docker glab-proxy policy", body)
+
     def test_glab_default_policy_refuses_escaped_unreserved_characters(self):
         # GitLab's router decodes these, so they could hide a blocked call.
         self._start()
@@ -403,6 +429,13 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("POST", "/api/v4/projects/123/runners/reset_registration_token"),
             ("POST", "/api/v4/groups/42/runners/reset_registration_token"),
             ("POST", "/api/v4/projects/123/triggers"),
+            ("POST", "/api/v4/projects/123/cluster_agents/4/tokens"),
+            ("POST", "/api/v4/deploy_keys"),
+            ("POST", "/api/v4/projects/123/members"),
+            ("POST", "/api/v4/groups/42/members"),
+            ("PUT", "/api/v4/projects/g%2Fp/members/7"),
+            ("POST", "/api/v4/groups/42/invitations"),
+            ("PUT", "/api/v4/projects/123/invitations/a@b.example"),
         )
         for method, path in blocked:
             with self.subTest(method=method, path=path):
@@ -417,6 +450,8 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("GET", "/api/v4/user/keys"),
             ("GET", "/api/v4/projects/123/triggers"),
             ("POST", "/api/v4/projects/123/runners"),
+            ("GET", "/api/v4/projects/123/members"),
+            ("GET", "/api/v4/deploy_keys"),
             ("POST", "/api/v4/projects/1/issues"),
             ("POST", "/api/v4/projects/1/merge_requests"),
         )
