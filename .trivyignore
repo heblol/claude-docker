@@ -59,11 +59,18 @@ CVE-2026-78669 exp:2026-11-04
 # undici CVE-2026-109869 (DoS on an unhandled stream error); the fix needs
 # 6.29.1, released upstream 2026-10-15. npm 12.2.1 (pins/npm.env), the
 # latest, vendors 6.29.0. No npm release carries 6.29.1 yet, and npm releases
-# every 1-4 weeks. pnpm 12.12.1 (pins/pnpm.env) vendors 6.29.0; pnpm 12.15.0
-# (2026-10-21) carries 6.29.1 and leaves the 7-day soak on 2026-10-28, so the
-# weekly refresh picks it up. At expiry, check the undici bundled by both pins
-# and drop this if both are fixed.
+# every 1-4 weeks. pnpm 12.15.0 (pins/pnpm.env) vendors 6.29.1, so npm's copy
+# is the only one left. At expiry, check the undici bundled by npm and drop
+# this if it is fixed.
 CVE-2026-109869 exp:2026-11-04
+# Same npm-bundled undici 6.29.0: certificate validation bypass via dropped
+# TLS options in Agent, fixed in 6.29.1. Trivy's DB picked it up after
+# 2026-10-27. npm only uses undici for registry traffic during installs. Same
+# expiry and reason as CVE-2026-109869.
+CVE-2026-109383 exp:2026-11-04
+# Same npm-bundled undici 6.29.0: DoS via TLS renegotiation with a mismatched
+# certificate, fixed in 6.29.1. Its own entry because suppression is per-ID.
+CVE-2026-87018 exp:2026-11-04
 # Scope note: trivy ignores are per-CVE-ID and image-wide, unlike the path- and
 # version-scoped .grype.yaml rule for the same two CVEs. That is fine while
 # /opt/az holds the image's only cryptography 48.x copy (pins/az-requirements.txt);
