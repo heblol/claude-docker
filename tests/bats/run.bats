@@ -1039,11 +1039,23 @@ TABLE
   [[ "$output" == *"egress log saved to"* ]]
 }
 
-@test "egress_save_log: an unwritable log dir never fails the teardown" {
+@test "egress_save_log: an unwritable log dir never fails the teardown, and says the log is lost" {
   egress_started=20260101T000000Z proxy_sid=abc
   : >"$HOME/.local"
   run egress_save_log
   [ "$status" -eq 0 ]
+  [[ "$output" == *"claude-docker: could not create $EGRESS_LOG_DIR; the egress log was not saved"* ]]
+  run ! grep -q "^docker logs" "$CALLS"
+}
+
+@test "egress_save_log: a log dir that can't be made owner-only is not written to" {
+  egress_started=20260101T000000Z proxy_sid=abc
+  chmod() { return 1; }
+  run egress_save_log
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not create $EGRESS_LOG_DIR; the egress log was not saved"* ]]
+  [ -z "$(ls -A "$EGRESS_LOG_DIR")" ]
+  run ! grep -q "^docker logs" "$CALLS"
 }
 
 # --- create_egress_networks ---

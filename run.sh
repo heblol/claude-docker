@@ -568,6 +568,13 @@ hostpath() {
 }
 
 
+# Whether the proxied --glab host carries an explicit port, which squid then
+# allows for that host only. The host:port goes into the squid config, so it
+# must be a plain name; anything else gets no rule and stays refused.
+egress_glab_port_rule() {
+  [ "$GLAB_SIDECAR_ACTIVE" = "1" ] && [[ $GLAB_PROXY_HOST =~ ^[A-Za-z0-9.-]+:[0-9]{1,5}$ ]]
+}
+
 # Emit the --egress-lock squid config to stdout (see
 # openspec/specs/api-egress-policy). A template, unlike the gh Caddyfile: squid
 # has no env substitution for ACL values. Its only variable inputs are
@@ -588,13 +595,6 @@ hostpath() {
 # ponytail: a CONNECT to a provider's raw IP isn't matched by the dstdomain
 # deny. Claude Code never does that, and it would still show up in the log;
 # add the providers' published ranges if that's not enough.
-# Whether the proxied --glab host carries an explicit port, which squid then
-# allows for that host only. The host:port goes into the squid config, so it
-# must be a plain name; anything else gets no rule and stays refused.
-egress_glab_port_rule() {
-  [ "$GLAB_SIDECAR_ACTIVE" = "1" ] && [[ $GLAB_PROXY_HOST =~ ^[A-Za-z0-9.-]+:[0-9]{1,5}$ ]]
-}
-
 gen_egress_squid_conf() {
   cat <<'EOF'
 http_port 3128
@@ -736,7 +736,10 @@ ensure_egress_image() {
 egress_save_log() {
   [ -n "${egress_started:-}" ] || return 0
   local base="$EGRESS_LOG_DIR/$egress_started-$proxy_sid" denied old_umask errs reason copy_rc=0
-  mkdir -p "$EGRESS_LOG_DIR" && chmod 700 "$EGRESS_LOG_DIR" || return 0
+  if ! { mkdir -p "$EGRESS_LOG_DIR" && chmod 700 "$EGRESS_LOG_DIR"; }; then
+    echo "claude-docker: could not create $EGRESS_LOG_DIR; the egress log was not saved" >&2
+    return 0
+  fi
   old_umask=$(umask)
   umask 077
   errs=$("$RUNTIME" logs "$EGRESS_SIDECAR" 2>&1 >"$base.log") || copy_rc=$?
@@ -1797,8 +1800,6 @@ start_auth_sidecar() {
   echo "claude-docker: auth-proxy sidecar '$AUTH_PROXY_SIDECAR' is active for $services — view the audit log with: $RUNTIME logs $AUTH_PROXY_SIDECAR" >&2
 }
 
-# CLAUDE_DOCKER_ADD_HOSTS entries for the agent container. The hosts the
-# sidecar intercepts are skipped: they must keep resolving to the sidecar.
 # Whether $1 (case-insensitive) is a name the active auth-proxy sidecar
 # answers for, so it must keep resolving to the sidecar.
 sidecar_name() {
@@ -1812,6 +1813,8 @@ sidecar_name() {
     && [ "$name" = "$(printf '%s' "${GLAB_PROXY_HOST%%:*}" | tr '[:upper:]' '[:lower:]')" ]
 }
 
+# CLAUDE_DOCKER_ADD_HOSTS entries for the agent container. The hosts the
+# sidecar intercepts are skipped: they must keep resolving to the sidecar.
 build_host_args() {
   local entry
   for entry in ${ADD_HOSTS[@]+"${ADD_HOSTS[@]}"}; do
