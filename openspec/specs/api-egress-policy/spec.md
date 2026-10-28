@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Make the model traffic of an `--api --egress-lock` session provable. The agent container has no route off the host, so every connection that leaves the internal network, Claude Code's model requests included, goes through a per-session squid forward proxy run from its own image. The proxy allows the `ANTHROPIC_BASE_URL` endpoint, refuses the model providers' own hosts and leaves other hosts open, and Claude Code's managed settings keep its model traffic on that endpoint. The proxy's log is saved on the host as the session's evidence. Sessions without `--egress-lock`, including plain `--api` sessions, are unaffected.
+Make the model traffic of an `--api --egress-lock` session provable. The agent container's only ways off its internal network are a per-session squid forward proxy, run from its own image, which logs every connection it carries, Claude Code's model requests included, and the auth-proxy sidecar, whose upstreams are fixed. The proxy allows the `ANTHROPIC_BASE_URL` endpoint, refuses the model providers' own hosts and leaves other hosts open, and Claude Code's managed settings keep its model traffic on that endpoint. The proxy's log is saved on the host as the session's evidence. Sessions without `--egress-lock`, including plain `--api` sessions, are unaffected.
 
 ## Requirements
 
