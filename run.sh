@@ -614,6 +614,7 @@ acl CONNECT method CONNECT
 acl egress_ports port 80 443
 acl egress_tls_port port 443
 acl egress_metadata_names dstdomain -n metadata.google.internal metadata.azure.internal
+acl egress_metadata_addrs dst 100.100.100.200/32 fd00:ec2::254/128
 acl egress_linklocal dst 169.254.0.0/16 fe80::/10
 acl egress_loopback dst 127.0.0.0/8 0.0.0.0/8 ::1
 EOF
@@ -635,6 +636,7 @@ EOF
 
 http_access deny manager
 http_access deny egress_metadata_names
+http_access deny egress_metadata_addrs
 http_access deny egress_linklocal
 http_access deny egress_loopback
 http_access allow egress_model_endpoint egress_model_port

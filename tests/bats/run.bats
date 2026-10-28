@@ -207,10 +207,12 @@ run_script_fn() {
   egress_api_host=gw.eu egress_api_port=8443
   run gen_egress_squid_conf
   [[ "$output" == *$'\nacl egress_model_port port 8443\n'* ]]
+  [[ "$output" == *$'\nacl egress_metadata_addrs dst 100.100.100.200/32 fd00:ec2::254/128\n'* ]]
   local rules
   rules=$(grep '^http_access' <<<"$output")
   [ "$rules" = "http_access deny manager
 http_access deny egress_metadata_names
+http_access deny egress_metadata_addrs
 http_access deny egress_linklocal
 http_access deny egress_loopback
 http_access allow egress_model_endpoint egress_model_port
