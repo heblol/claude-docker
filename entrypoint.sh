@@ -64,7 +64,7 @@ install_cas() {
 # below hands it back to HOST_UID.
 approve_api_key() {
   [ "${CLAUDE_DOCKER_EGRESS_LOCK:-}" = 1 ] && [ -n "${ANTHROPIC_API_KEY:-}" ] || return 0
-  local cfg="$ROOT_HOME/.claude.json" cfg_tmp
+  local cfg="$ROOT_HOME/.claude.json" cfg_tmp rc
   if [ -e "$cfg" ] || [ -L "$cfg" ]; then
     if ! exec 3<"$cfg" || [ "$(readlink /proc/self/fd/3)" != "$cfg" ]; then
       exec 3<&-
@@ -74,14 +74,15 @@ approve_api_key() {
   else
     exec 3<<<'{}'
   fi
-  chown root "$ROOT_HOME" || return
-  cfg_tmp=$(mktemp "$cfg.XXXXXX") || return
+  # Every early return closes fd 3, and one after mktemp removes the temp file:
+  # it sits in the persistent volume.
+  chown root "$ROOT_HOME" && cfg_tmp=$(mktemp "$cfg.XXXXXX") || { rc=$?; exec 3<&-; return "$rc"; }
   if jq '(env.ANTHROPIC_API_KEY | gsub("^\\s+|\\s+$"; "") | .[-20:]) as $id
          | .customApiKeyResponses.rejected //= []
          | .customApiKeyResponses.approved //= []
          | if (.customApiKeyResponses.approved | index([$id])) then .
            else .customApiKeyResponses.approved += [$id] end' <&3 >"$cfg_tmp" 2>/dev/null; then
-    mv -f "$cfg_tmp" "$cfg" || return
+    mv -f "$cfg_tmp" "$cfg" || { rc=$?; rm -f "$cfg_tmp"; exec 3<&-; return "$rc"; }
   else
     rm -f "$cfg_tmp"
     printf 'entrypoint: WARN %s is not valid JSON; not approving ANTHROPIC_API_KEY\n' "$cfg" >&2

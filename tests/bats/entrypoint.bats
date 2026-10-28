@@ -278,3 +278,19 @@ approve() {
   [ "$status" -eq 7 ]
   [ ! -e "$ROOT_HOME/.claude.json" ]
 }
+
+@test "approve_api_key: a failed rename leaves no temp file in the volume" {
+  printf '{}' > "$ROOT_HOME/.claude.json"
+  mv() { return 5; }
+  approve
+  [ "$status" -eq 5 ]
+  [ "$(cat "$ROOT_HOME/.claude.json")" = '{}' ]
+  [ "$(ls -A "$ROOT_HOME")" = .claude.json ]
+}
+
+@test "approve_api_key: a failed mktemp stops before writing" {
+  mktemp() { return 6; }
+  approve
+  [ "$status" -eq 6 ]
+  [ -z "$(ls -A "$ROOT_HOME")" ]
+}
