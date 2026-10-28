@@ -675,6 +675,18 @@ setup_linked_skill() {
   [[ "$stderr" == *"skipping"*"skills/foo"* ]]
 }
 
+@test "stage_host_config: identity checks that never match skip items, not the launch" {
+  # Stands in for a platform whose stat reports inodes differently (Git Bash).
+  setup_linked_skill
+  echo rules >"$CLAUDE_CONFIG_DIR/CLAUDE.md"
+  file_id() { echo 0:0; }
+  run --separate-stderr stage_host_config
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"skipping"* ]]
+  [ ! -e "$stage/skills" ] && [ ! -e "$stage/CLAUDE.md" ]
+  [[ "$(lines_of "${MOUNT_ARGS[@]}")" != *"/root/.claude/skills"* ]]
+}
+
 @test "one_hop: strips trailing slashes, refuses . and .. targets" {
   mkdir -p "$BATS_TEST_TMPDIR/t"
   ln -s "$BATS_TEST_TMPDIR/t//" "$BATS_TEST_TMPDIR/slash"
@@ -787,6 +799,16 @@ run_statusline() {
   stage_git_overlays
   [ ! -e "$stage/git-config-repo" ]
   [ "${#MOUNT_ARGS[@]}" -eq 0 ]
+}
+
+@test "stage_git_overlays: a refused .git/config warns; no repo stays quiet" {
+  stage="$BATS_TEST_TMPDIR/stage"
+  mkdir -p "$stage" "$WS/.git" "$BATS_TEST_TMPDIR/norepo"
+  ln -s /etc/hostname "$WS/.git/config"
+  SEEN_NAMES=(repo norepo) SEEN_PATHS=("$WS" "$BATS_TEST_TMPDIR/norepo")
+  run --separate-stderr stage_git_overlays
+  [ "$status" -eq 0 ]
+  [ "$stderr" = "claude-docker: no .git/config overlay for $WS: it is a symlink, or changed while being read; git in the container uses the host file" ]
 }
 
 @test "stage_git_overlays: a .git dir that is a link to a dir is skipped" {

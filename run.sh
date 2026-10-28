@@ -493,12 +493,18 @@ link_stays_inside() {
 # and get one hop, into a fresh copy root. Otherwise a link is kept as a link
 # only if it stays inside its copy root ($4 = depth below it); any other link
 # is skipped with a warning. Relative $1 is entered from the current directory,
-# which keeps the walk on the directories already checked.
+# which keeps the walk on the directories already checked. A directory that
+# fails its identity check is skipped with a warning, never fatal: if a
+# platform reports inodes differently, launch loses that item, not the session.
 copy_tree_nofollow() {
-  local src=$1 dest=$2 hop=$3 depth=$4
+  local src=$1 dest=$2 hop=$3 depth=$4 shown=$1
+  case $src in /*) ;; *) shown="$PWD/${src#./}" ;; esac
   mkdir -p "$dest" || return 1
   (
-    id=$(link_id "$src") && cd "$src" && [ "$(file_id .)" = "$id" ] || exit 1
+    if ! id=$(link_id "$src") || ! cd "$src" || [ "$(file_id .)" != "$id" ]; then
+      echo "claude-docker: skipping $shown: it is a link now, or changed while being copied" >&2
+      exit 1
+    fi
     for e in ./* ./.[!.]* ./..?*; do
       [ -e "$e" ] || [ -L "$e" ] || continue
       n=${e#./}
@@ -509,7 +515,7 @@ copy_tree_nofollow() {
         if ! t=$(one_hop "$PWD/$n"); then
           echo "claude-docker: skipping $PWD/$n: a symlink to a symlink, or to nothing" >&2
         elif [ -d "$t" ]; then
-          copy_tree_nofollow "$t" "$dest/$n" 0 0 || exit 1
+          copy_tree_nofollow "$t" "$dest/$n" 0 0 || true
         elif ! cat_nofollow "$(dirname "$t")" "$(basename "$t")" >"$dest/$n"; then
           rm -f "$dest/$n"
           echo "claude-docker: skipping $PWD/$n: its target changed while being read" >&2
@@ -517,14 +523,15 @@ copy_tree_nofollow() {
           [ ! -x "$t" ] || chmod +x "$dest/$n"
         fi
       elif [ -L "$e" ]; then
-        l=$(readlink "$e") || exit 1
-        if link_stays_inside "$l" "$depth"; then
+        if ! l=$(readlink "$e"); then
+          echo "claude-docker: skipping $PWD/$n: it changed while being copied" >&2
+        elif link_stays_inside "$l" "$depth"; then
           ln -s "$l" "$dest/$n" || exit 1
         else
           echo "claude-docker: skipping $PWD/$n: a symlink to $l, outside the copied directory" >&2
         fi
       elif [ -d "$e" ]; then
-        copy_tree_nofollow "./$n" "$dest/$n" 0 $((depth + 1)) || exit 1
+        copy_tree_nofollow "./$n" "$dest/$n" 0 $((depth + 1)) || true
       elif [ -f "$e" ]; then
         if cat_checked "$n" >"$dest/$n" 2>/dev/null; then
           [ ! -x "$e" ] || chmod +x "$dest/$n"
@@ -534,7 +541,7 @@ copy_tree_nofollow() {
         fi
       fi
     done
-  )
+  ) || { rm -rf "$dest"; return 1; }
 }
 
 # Stage host config file $CLAUDE_CONFIG_DIR/$1 (one hop allowed) as $2. Fails
@@ -1223,7 +1230,7 @@ stage_host_config() {
       echo "claude-docker: skipping $CLAUDE_CONFIG_DIR/$item: not a directory reached by at most one symlink" >&2
       continue
     fi
-    copy_tree_nofollow "$src" "$stage/$item" 1 0 || exit 1
+    copy_tree_nofollow "$src" "$stage/$item" 1 0 || continue
     MOUNT_ARGS+=("-v" "$(hostpath "$stage/$item"):/root/.claude/$item:ro")
   done
   if stage_config_file CLAUDE.md "$stage/CLAUDE.md"; then
@@ -1328,6 +1335,11 @@ EOF
       MOUNT_ARGS+=("-v" "$(hostpath "$stage/git-config-$ws_name"):/workspaces/$ws_name/.git/config")
     else
       rm -f "$stage/git-config-$ws_name"
+      # Quiet for a workspace with no repo, or a worktree/submodule pointer.
+      if [ -d "$ws_abs/.git" ] && [ ! -L "$ws_abs/.git" ] \
+         && { [ -e "$ws_abs/.git/config" ] || [ -L "$ws_abs/.git/config" ]; }; then
+        echo "claude-docker: no .git/config overlay for $ws_abs: it is a symlink, or changed while being read; git in the container uses the host file" >&2
+      fi
     fi
     i=$((i + 1))
   done
