@@ -76,7 +76,8 @@ approve_api_key() {
   fi
   # Every early return closes fd 3, and one after mktemp removes the temp file:
   # it sits in the persistent volume.
-  chown root "$ROOT_HOME" && cfg_tmp=$(mktemp "$cfg.XXXXXX") || { rc=$?; exec 3<&-; return "$rc"; }
+  chown root "$ROOT_HOME" || { rc=$?; exec 3<&-; return "$rc"; }
+  cfg_tmp=$(mktemp "$cfg.XXXXXX") || { rc=$?; exec 3<&-; return "$rc"; }
   if jq '(env.ANTHROPIC_API_KEY | gsub("^\\s+|\\s+$"; "") | .[-20:]) as $id
          | .customApiKeyResponses.rejected //= []
          | .customApiKeyResponses.approved //= []
