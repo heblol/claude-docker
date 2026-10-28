@@ -256,6 +256,39 @@ http_access allow all" ]
   [[ "$output" == *"points at one ('api.anthropic.com')"* ]]
 }
 
+@test "validate_opts: --egress-lock reads the host before a ? or #, not after an @ in it" {
+  # The authority ends at the first /, ? or #: these name api.anthropic.com,
+  # which the --api sidecar would dial, not the gateway after the @.
+  WITH_API=1 WITH_EGRESS_LOCK=1 ANTHROPIC_AUTH_TOKEN=t
+  local url
+  for url in 'https://api.anthropic.com?@gw.example.eu' 'https://api.anthropic.com#@gw.example.eu' \
+             'https://api.anthropic.com?x=1@gw.example.eu/v1'; do
+    ANTHROPIC_BASE_URL="$url"
+    run validate_opts
+    [ "$status" -eq 1 ] || { echo "accepted: $url"; return 1; }
+    [[ "$output" == *"points at one ('api.anthropic.com')"* ]]
+  done
+}
+
+@test "validate_opts: --egress-lock records the host the --api sidecar dials" {
+  WITH_API=1 WITH_EGRESS_LOCK=1 ANTHROPIC_AUTH_TOKEN=t
+  local url want
+  for url in 'https://gw.example.eu?@other.example=gw.example.eu' \
+             'https://gw.example.eu#@other.example=gw.example.eu' \
+             'https://u:p@gw.example.eu:8443/v1?next=@other.example=gw.example.eu' \
+             'https://gw.example.eu/v1/?a=b=gw.example.eu'; do
+    want="${url##*=}"
+    ANTHROPIC_BASE_URL="${url%=*}"
+    validate_opts
+    [ "$egress_api_host" = "$want" ] || { echo "lock: $ANTHROPIC_BASE_URL -> $egress_api_host"; return 1; }
+    mkdir -p "$BATS_TEST_TMPDIR/sites"
+    stage_api_proxy_site "$BATS_TEST_TMPDIR"
+    local dialed="${API_PROXY_UPSTREAM#*://}"
+    dialed="${dialed##*@}"
+    [ "${dialed%:*}" = "$want" ] || { echo "sidecar: $ANTHROPIC_BASE_URL -> $API_PROXY_UPSTREAM"; return 1; }
+  done
+}
+
 @test "validate_opts: --egress-lock refuses a URL that would need JSON escaping" {
   WITH_API=1 WITH_EGRESS_LOCK=1 ANTHROPIC_AUTH_TOKEN=t
   local url

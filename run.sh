@@ -306,6 +306,15 @@ parse_args() {
   return 0
 }
 
+# The authority ([userinfo@]host[:port]) of URL $1. RFC 3986 ends it at the
+# first /, ? or #, so https://api.anthropic.com?@gw.eu is api.anthropic.com.
+# The one parser for ANTHROPIC_BASE_URL: --egress-lock checks and records the
+# host the --api sidecar dials (stage_api_proxy_site), not a different one.
+url_authority() {
+  local a="${1#*://}"
+  printf '%s' "${a%%[/?#]*}"
+}
+
 validate_opts() {
   # --gh (auth-proxy sidecar) and --gh-direct (legacy forwarding) are mutually
   # exclusive strategies for the same credential — picking one silently would
@@ -399,11 +408,11 @@ validate_opts() {
       echo "claude-docker: --egress-lock needs ANTHROPIC_BASE_URL (your model gateway); without it Claude Code calls api.anthropic.com, which --egress-lock blocks" >&2
       exit 1
     fi
-    # ANTHROPIC_BASE_URL is scheme://[userinfo@]host[:port][/path]. The host
-    # and port are written into the squid config, so both must pass a
-    # validator first. No port means the scheme's default.
-    egress_api_host="${ANTHROPIC_BASE_URL#*://}"
-    egress_api_host="${egress_api_host%%/*}"
+    # ANTHROPIC_BASE_URL is scheme://[userinfo@]host[:port][/path][?query].
+    # The host and port are written into the squid config, so both must pass
+    # a validator first. No port means the scheme's default. A newline the
+    # command substitution strips is refused by the URL check below.
+    egress_api_host=$(url_authority "$ANTHROPIC_BASE_URL")
     egress_api_host="${egress_api_host##*@}"
     egress_api_port=""
     case "$egress_api_host" in *:*) egress_api_port="${egress_api_host##*:}" ;; esac
@@ -1523,10 +1532,10 @@ CADDY
 stage_api_proxy_site() {
   local api_base api_rest
   api_base="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
-  api_base="${api_base%%\?*}"
+  api_base="${api_base%%[?#]*}"
   while [ "${api_base%/}" != "$api_base" ]; do api_base="${api_base%/}"; done
   api_rest="${api_base#*://}"
-  API_PROXY_UPSTREAM="${api_base%%://*}://${api_rest%%/*}"
+  API_PROXY_UPSTREAM="${api_base%%://*}://$(url_authority "$api_base")"
   API_PROXY_PREFIX=""
   case "$api_rest" in */*) API_PROXY_PREFIX="/${api_rest#*/}" ;; esac
   export API_PROXY_UPSTREAM API_PROXY_PREFIX
