@@ -6,7 +6,7 @@ The failure is costly well beyond git itself. Agents work around it by appending
 
 ## What Changes
 
-- The image's system git config (`/etc/gitconfig`) carries `safe.directory = /workspaces/*` on every host. Git honours `safe.directory` at system scope, a session can't overwrite the setting through `GIT_CONFIG_*` exports, and git reads it regardless of the environment it runs in.
+- The image's system git config (`/etc/gitconfig`) carries `safe.directory = /workspaces/*` on every host. Git honours `safe.directory` at system scope, a `GIT_CONFIG_*` export that adds entries (the agents' workaround) doesn't remove it, and git reads it regardless of the environment it runs in.
 - `run.sh` no longer passes `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0` on Windows hosts; the image setting replaces it.
 - The scope is unchanged: only paths under `/workspaces` are trusted. A repository elsewhere in the container (e.g. under `/tmp`) whose owner differs is still refused.
 
@@ -16,7 +16,7 @@ The failure is costly well beyond git itself. Agents work around it by appending
 
 ## Impact
 
-- Linux/macOS: git no longer refuses a workspace on an ownership mismatch. Every path under `/workspaces` is a directory the user passed to `claude-docker`, and the container can already write it, so trusting its owner adds no access the agent lacks.
+- Linux/macOS: git no longer refuses a workspace on an ownership mismatch. Every path under `/workspaces` is a directory the user passed to `claude-docker`, owned by the user or writable by the container (git already trusted a `--ro` workspace: it's owned by the UID the agent runs as), so trusting its owner adds no access the agent lacks.
 - Windows: same behaviour, delivered by the image instead of the environment.
 - Existing `safe.directory` entries in a warm `claude-code-root` volume are left alone. They become redundant, and the docs tell the user to delete them.
 
