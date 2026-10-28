@@ -94,8 +94,10 @@ Under `--glab` the token, exported or discovered, never enters the agent contain
   - Any `Authorization`, `PRIVATE-TOKEN` or `JOB-TOKEN` header the client sent is removed first.
 - **The mounted `config.yml` copy** also has every token value blanked, even when no token was found (`token`, `job_token`, `oauth2_refresh_token`, for every host), so tokens for other GitLab instances stay out too.
 - **Policy:** the sidecar answers these with `403`, and they never reach GitLab:
-  - `DELETE` of a project or group (`/api/v4/projects/:id`, `/api/v4/groups/:id`, numeric id or URL-encoded path).
+  - `DELETE` of a project or group (`/api/v4/projects/:id`, `/api/v4/groups/:id`, numeric id or URL-encoded path), and a `POST` to the same paths, which GitLab turns into a `DELETE` when it carries `_method=delete` or `X-HTTP-Method-Override: DELETE`.
   - REST calls that create or rotate a token, since the response would hand the container a real credential: personal access tokens (`/personal_access_tokens/:id/rotate`, `self` included; `/user/personal_access_tokens`; `/users/:id/personal_access_tokens`), impersonation tokens, project and group access tokens and their rotation, deploy tokens, and group service-account tokens. GraphQL mutations that create tokens are not filtered.
+
+  - Any request whose path percent-encodes a letter, digit or `-._~` (such as `/api/v4/%70rojects/1`). GitLab decodes those, so they could hide one of the calls above; clients never send them. `%2F` and other reserved characters are unaffected.
 
   The match runs on the raw request URI and allows repeated slashes and a `.json` suffix, both of which GitLab accepts. It is a best-effort filter for the paths GitLab is known to route, not a guarantee: scope the token itself to what the session needs.
 

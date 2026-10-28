@@ -772,17 +772,12 @@ discover_tokens() {
             echo "claude-docker: --glab: GitLab host '$_glab_from' is plain http, which the auth proxy can't serve; use --glab-direct" >&2
             exit 1 ;;
         esac
-        case "${_glab_host%:*}" in
-          *[!0-9.]*) ;;
-          *)
-            echo "claude-docker: --glab: GitLab host '$_glab_host' is an IP address, which the auth proxy can't intercept by name; use --glab-direct" >&2
-            exit 1 ;;
-        esac
-        case "$_glab_host" in
-          *\[*|*:*:*)
-            echo "claude-docker: --glab: GitLab host '$_glab_host' is an IP address, which the auth proxy can't intercept by name; use --glab-direct" >&2
-            exit 1 ;;
-        esac
+        # IPv4 (only digits and dots before the port) or IPv6 (brackets or
+        # more than one colon).
+        if [[ "${_glab_host%:*}" != *[!0-9.]* || "$_glab_host" == *\[* || "$_glab_host" == *:*:* ]]; then
+          echo "claude-docker: --glab: GitLab host '$_glab_host' is an IP address, which the auth proxy can't intercept by name; use --glab-direct" >&2
+          exit 1
+        fi
         # The host lands in the Caddyfile as the site address and in
         # --add-host: allow only a hostname with an optional port.
         if ! [[ "$_glab_host" =~ ^[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
@@ -1075,7 +1070,13 @@ CADDY
 # project/group deletion and the REST calls that create or rotate tokens (they
 # return a real credential). Both match the raw request URI: path_regexp sees
 # the decoded path, so a URL-encoded project path (group%2Fproject) would slip
-# past it. Request headers are dropped from the access log.
+# past it. A raw match can be dodged by percent-encoding a letter
+# (/api/v4/%70rojects/1), which GitLab's router decodes, so a request that
+# escapes an unreserved character is refused outright; no client sends one.
+# Deletion also matches POST: Rack::MethodOverride turns a POST carrying
+# _method=delete or X-HTTP-Method-Override: DELETE into a DELETE, and GitLab
+# has no POST on a bare project or group path. Request headers are dropped
+# from the access log.
 stage_glab_proxy_site() {
   if [ -n "${CLAUDE_DOCKER_GLAB_POLICY:-}" ]; then
     cp "$CLAUDE_DOCKER_GLAB_POLICY" "$1/glab-policy.caddy" || exit 1
@@ -1103,8 +1104,10 @@ stage_glab_proxy_site() {
 		@glab_proxy_git path_regexp (/info/refs|/git-upload-pack|/git-receive-pack)$
 		request_header @glab_proxy_git Authorization "{env.GLAB_PROXY_BASIC}"
 
+		@glab_proxy_escaped vars_regexp {http.request.uri} ^[^?]*%(2[DEde]|3[0-9]|4[1-9A-Fa-f]|5[0-9AFaf]|6[1-9A-Fa-f]|7[0-9AEae])
+		respond @glab_proxy_escaped "claude-docker glab-proxy policy: a percent-encoded letter, digit or -._~ in the path is refused, since it could hide a blocked call. Send it unencoded, or bypass the proxy entirely with --glab-direct." 403
 		@glab_proxy_delete {
-			method DELETE
+			method DELETE POST
 			vars_regexp {http.request.uri} ^/+api/+v4/+(projects|groups)/+[^/?]+/*(\?.*)?$
 		}
 		respond @glab_proxy_delete "claude-docker glab-proxy policy: project and group deletion is blocked by default. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403

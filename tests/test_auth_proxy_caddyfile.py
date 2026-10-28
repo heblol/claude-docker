@@ -329,13 +329,36 @@ class SidecarBehaviourTest(unittest.TestCase):
         for path in ("/api/v4/projects/123", "/api/v4/projects/123/", "/api/v4/projects/g%2Fsub%2Fp",
                      "/api/v4/projects/g%2fp?x=1", "//api/v4/groups/42", "/api/v4//projects/1",
                      "/api//v4/projects/1", "/api/v4/projects/1.json"):
-            with self.subTest(path=path):
-                st, body = self.glab("DELETE", path)
-                self.assertEqual(st, 403)
-                self.assertIn("claude-docker glab-proxy policy", body)
+            for method in ("DELETE", "POST"):  # POST: Rack::MethodOverride (_method=delete)
+                with self.subTest(method=method, path=path):
+                    st, body = self.glab(method, path)
+                    self.assertEqual(st, 403)
+                    self.assertIn("claude-docker glab-proxy policy", body)
+        st, _ = self.glab("POST", "/api/v4/projects/123", {"X-HTTP-Method-Override": "DELETE"})
+        self.assertEqual(st, 403)
         for path in ("/api/v4/projects/123/repository/branches/x", "/api/v4/projects/123/issues/1"):
             with self.subTest(path=path):
                 self.assertEqual(self.glab("DELETE", path)[0], 200)
+        self.assertEqual(self.glab("POST", "/api/v4/projects/user/5")[0], 200)
+
+    def test_glab_default_policy_refuses_escaped_unreserved_characters(self):
+        # GitLab's router decodes these, so they could hide a blocked call.
+        self._start()
+        for method, path in (("DELETE", "/api/v4/%70rojects/123"), ("DELETE", "/%61pi/v4/groups/1"),
+                             ("DELETE", "/api/v4/projects/%31%32%33"), ("DELETE", "/api/v4/gro%75ps/1"),
+                             ("POST", "/api/v4/user/personal%5Faccess%5ftokens"),
+                             ("POST", "/api/v4/personal_access_tokens/self/rotate%2Ejson"),
+                             ("GET", "/g/p.git/info/%72efs?service=git-upload-pack")):
+            with self.subTest(method=method, path=path):
+                st, body = self.glab(method, path)
+                self.assertEqual(st, 403)
+                self.assertIn("claude-docker glab-proxy policy", body)
+        # Reserved characters keep working: glab escapes / and spaces in paths,
+        # and the query string is not checked.
+        for path in ("/api/v4/projects/g%2Fp/repository/files/a%20b.txt/raw",
+                     "/api/v4/projects/g%2fp/issues?search=%61"):
+            with self.subTest(path=path):
+                self.assertEqual(self.glab("GET", path)[0], 200)
 
     def test_glab_default_policy_blocks_token_minting(self):
         self._start()
