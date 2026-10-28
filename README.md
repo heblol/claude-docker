@@ -132,6 +132,7 @@ Conversation history persists in the shared `claude-code-home` volume. Under `--
 
 ## Documentation
 
+- [Vision and scope](docs/vision-and-scope.md) — what claude-docker is for, its principles, defaults and options
 - [Auth model](docs/auth.md) — AWS SSO, GitHub auth proxy, Terraform Cloud, private registries, custom model endpoint, Azure DevOps Server CA
 - [Security](docs/security.md) — threat model, image vulnerability scanning
 - [Maintenance](docs/maintenance.md) — updating pinned tool versions, CI smoke tests
@@ -140,7 +141,7 @@ Conversation history persists in the shared `claude-code-home` volume. Under `--
 
 ## Scope
 
-claude-docker runs Claude Code in a container, with credentials off unless you opt in. It doesn't:
+claude-docker runs Claude Code in a container, with credentials off unless you opt in. See [Vision and scope](docs/vision-and-scope.md) for what it is for and its principles. It doesn't:
 
 - work without docker or podman,
 - run agents other than Claude Code,
