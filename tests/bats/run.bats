@@ -455,6 +455,26 @@ run_script_fn() {
 
 # --- discover_tokens ---
 
+@test "glab_host_of: host[:port] from a URL or a bare host" {
+  local in want
+  while IFS='|' read -r in want; do
+    [ "$(glab_host_of "$in")" = "$want" ] || { echo "glab_host_of '$in' = '$(glab_host_of "$in")', want '$want'"; return 1; }
+  done <<'TABLE'
+gitlab.example.com|gitlab.example.com
+gitlab.example.com:8443|gitlab.example.com:8443
+https://gitlab.example.com|gitlab.example.com
+https://gitlab.example.com/|gitlab.example.com
+https://gitlab.example.com:8443/group/p.git|gitlab.example.com:8443
+https://user@gitlab.example.com/g/p|gitlab.example.com
+https://user:p@ss@gitlab.example.com/g|gitlab.example.com
+https://gitlab.example.com/g/a@b|gitlab.example.com
+ssh://git@gitlab.example.com:2222/g/p.git|gitlab.example.com:2222
+http://gitlab.internal/x|gitlab.internal
+https://|
+|
+TABLE
+}
+
 @test "discover_tokens: --gh-direct forwards the gh CLI token by name" {
   WITH_GH_DIRECT=1
   discover_tokens
