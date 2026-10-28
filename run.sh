@@ -1073,7 +1073,9 @@ CADDY
 # the session: tokens, SSH/GPG/deploy keys, runner, trigger and cluster-agent
 # tokens, project/group members (added, imported or approved), invitations,
 # LDAP/SAML group links, shares, transfers, webhooks, integrations, push
-# mirrors and access-request approvals. A PUT on a bare project or group
+# mirrors, pipeline schedules and access-request approvals, plus the admin
+# calls that create or edit users and OAuth applications or change instance
+# settings. A PUT on a bare project or group
 # path (its settings, visibility included) is refused too: Caddy can't read
 # the body to tell a visibility change apart. Best effort: GraphQL is not
 # filtered, and token scope is the real limit. Both match the raw request
@@ -1137,9 +1139,9 @@ stage_glab_proxy_site() {
 		respond @glab_proxy_settings "claude-docker glab-proxy policy: changing a project's or group's settings is blocked by default, since visibility and access settings can open access that outlives the session. Bypass the proxy with --glab-direct to change them." 403
 		@glab_proxy_mint {
 			method POST PUT
-			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys|(projects|groups)/+[^/?]+/+(share|transfer|hooks(/+[^/?]+)?|access_requests/+[^/?]+/+approve)|projects/+[^/?]+/+remote_mirrors(/+[^/?]+)?|hooks|projects/+[^/?]+/+import_project_members/+[^/?]+|(projects|groups)/+[^/?]+/+members/+[^/?]+/+approve|groups/+[^/?]+/+(ldap|saml)_group_links(/+[^/?]+)?|(projects|groups)/+[^/?]+/+(integrations|services)(/+[^/?]+)?)(\.json)?/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys|(projects|groups)/+[^/?]+/+(share|transfer|hooks(/+[^/?]+)?|access_requests/+[^/?]+/+approve)|projects/+[^/?]+/+remote_mirrors(/+[^/?]+)?|hooks|projects/+[^/?]+/+import_project_members/+[^/?]+|(projects|groups)/+[^/?]+/+members/+[^/?]+/+approve|groups/+[^/?]+/+(ldap|saml)_group_links(/+[^/?]+)?|(projects|groups)/+[^/?]+/+(integrations|services)(/+[^/?]+)?|projects/+[^/?]+/+pipeline_schedules(/+[^/?]+(/+take_ownership)?)?|users(/+[^/?]+)?|applications|application/+settings)(\.json)?/*(\?.*)?$
 		}
-		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding keys, members, group links, shares, webhooks, integrations or push mirrors, approving access requests or members, and transfers are blocked by default, since they grant access or a data feed that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding keys, members, group links, shares, webhooks, integrations or push mirrors, approving access requests or members, pipeline schedules, transfers, and the admin calls that create users, OAuth applications or change instance settings are blocked by default, since they grant access or a data feed that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		import /etc/caddy/glab-policy.caddy
 
 		reverse_proxy {$GLAB_PROXY_UPSTREAM}

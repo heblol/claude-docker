@@ -464,6 +464,13 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("PUT", "/api/v4/projects/123/integrations/emails-on-push"),
             ("PUT", "/api/v4/groups/42/integrations/slack"),
             ("PUT", "/api/v4/projects/123/services/slack"),
+            ("POST", "/api/v4/projects/123/pipeline_schedules"),
+            ("PUT", "/api/v4/projects/123/pipeline_schedules/5"),
+            ("POST", "/api/v4/projects/123/pipeline_schedules/5/take_ownership"),
+            ("POST", "/api/v4/users"),
+            ("PUT", "/api/v4/users/7"),
+            ("POST", "/api/v4/applications"),
+            ("PUT", "/api/v4/application/settings"),
         )
         for method, path in blocked:
             with self.subTest(method=method, path=path):
@@ -485,6 +492,10 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("PUT", "/api/v4/projects/123/issues/1"),
             ("GET", "/api/v4/projects/123/integrations"),
             ("GET", "/api/v4/groups/42/ldap_group_links"),
+            ("GET", "/api/v4/projects/123/pipeline_schedules"),
+            ("POST", "/api/v4/projects/123/pipeline_schedules/5/play"),
+            ("GET", "/api/v4/users"),
+            ("POST", "/api/v4/projects/123/pipeline"),
             ("POST", "/api/v4/projects/1/issues"),
             ("POST", "/api/v4/projects/1/merge_requests"),
         )
