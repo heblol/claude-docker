@@ -542,7 +542,7 @@ run_script_fn() {
 }
 
 @test "discover_tokens: --glab refuses hosts the proxy can't serve" {
-  for h in http://gitlab.internal 10.0.0.5 10.0.0.5:8443 "[::1]:8443"; do
+  for h in http://gitlab.internal 10.0.0.5 10.0.0.5:8443 "[::1]:8443" fe80::1; do
     WITH_GLAB=1 GITLAB_HOST="$h"
     SEEN_PATHS=("$WS")
     run discover_tokens
