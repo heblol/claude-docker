@@ -310,6 +310,14 @@ run_wrapped() {
   return "$rc"
 }
 
+# True when run.sh's own output in a run_wrapped log contains $2. util-linux
+# script(1) writes a "Script started on ... [COMMAND=...]" header (and a
+# "Script done" footer) holding the harness's own command line, fake
+# credentials included, so those lines are left out.
+log_output_has() {
+  grep -v -e '^Script started on ' -e '^Script done on ' "$1" 2>/dev/null | grep -qF -- "$2"
+}
+
 # sha256 of a file, portable: sha256sum (Linux) vs shasum -a 256 (macOS).
 hash_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -1326,7 +1334,7 @@ phase6_glab_api_fail_closed() {
   else
     record_pass "2.7 agent container never started with an invalid glab policy"
   fi
-  if grep -qF "$FAKE_GLAB" "$log" 2>/dev/null; then
+  if log_output_has "$log" "$FAKE_GLAB"; then
     record_fail "2.7 invalid policy: the GitLab token appears in run.sh output"
   else
     record_pass "2.7 invalid policy: the GitLab token appears nowhere in run.sh output"
@@ -1385,7 +1393,7 @@ phase6_glab_api_fail_closed() {
   else
     record_pass "3.6 agent container never started when the --api sidecar failed"
   fi
-  if grep -qF "$FAKE_API" "$log" 2>/dev/null; then
+  if log_output_has "$log" "$FAKE_API"; then
     record_fail "3.6 bad image: the API key appears in run.sh output"
   else
     record_pass "3.6 bad image: the API key appears nowhere in run.sh output"
