@@ -668,7 +668,7 @@ run_glabapi_checks() {
     *) fail "glab: LFS batch echo: $out" ;;
   esac
   local code body
-  body=$(mktemp)
+  body=$(mktemp "$SCRATCH/glab-body.XXXXXX")
   code=$(curl -sS --max-time 10 -o "$body" -w '%{http_code}' -X DELETE 'https://gitlab.example.test/api/v4/projects/g%2Fp' 2>/dev/null)
   if [ "$code" = 403 ] && grep -q "claude-docker glab-proxy policy" "$body"; then
     pass "glab: default policy blocks DELETE /api/v4/projects/g%2Fp"

@@ -119,7 +119,7 @@ Under `--glab`, whether or not a token was found, the `config.yml` copy mounted 
 
 ### Requirement: GitLab request filtering policy
 
-The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or group, a `POST` to the same paths other than the project and group imports (GitLab honours `_method=delete` and `X-HTTP-Method-Override` on a `POST`), a REST `POST` or `PUT` that creates or rotates a token or adds an SSH, GPG or deploy key, a runner, a pipeline trigger, a cluster-agent token, or a project or group member or invitation, and a `DELETE`, `POST` or `PUT` whose path percent-encodes an unreserved character (`A-Z a-z 0-9 - . _ ~`), on the proxied host. The filter is best effort, not a guarantee that no durable credential can be obtained. Matching SHALL run on the raw, still percent-encoded request URI under `/api/v4/`, tolerating repeated slashes, a trailing slash, a `.json` suffix and a query string. Token creation through GraphQL is not filtered. The `403` body SHALL name the claude-docker glab-proxy policy.
+The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or group, a `POST` to the same paths other than the project and group imports (GitLab honours `_method=delete` and `X-HTTP-Method-Override` on a `POST`), a REST `POST` or `PUT` that creates or rotates a token or adds an SSH, GPG or deploy key, a runner, a pipeline trigger, a cluster-agent token, a project or group member, invitation, share, transfer, webhook or push mirror, or an access-request approval, a `PUT` on a bare project or group path (its settings), and a `DELETE`, `POST` or `PUT` whose path percent-encodes an unreserved character (`A-Z a-z 0-9 - . _ ~`), on the proxied host. The filter is best effort, not a guarantee that no durable credential can be obtained. Matching SHALL run on the raw, still percent-encoded request URI under `/api/v4/`, tolerating repeated slashes, a trailing slash, a `.json` suffix and a query string. Token creation through GraphQL is not filtered. The `403` body SHALL name the claude-docker glab-proxy policy.
 
 #### Scenario: Project deletion is blocked by default
 
@@ -138,6 +138,12 @@ The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or g
 - **THEN** the response is `403` and the request never reaches GitLab
 - **AND** `POST /api/v4/projects/import` and `POST /api/v4/groups/import` are still forwarded
 
+#### Scenario: Project and group settings changes are blocked by default
+
+- **WHEN** `PUT /api/v4/projects/123?visibility=public` or `PUT /api/v4/groups/42` runs inside the agent container
+- **THEN** the response is `403` naming the claude-docker glab-proxy policy
+- **AND** `PUT /api/v4/projects/123/issues/1` is still forwarded
+
 #### Scenario: An escaped unreserved character cannot hide a blocked call
 
 - **WHEN** `DELETE /api/v4/%70rojects/123` or `POST /api/v4/user/personal%5Faccess%5Ftokens` runs inside the agent container
@@ -146,7 +152,7 @@ The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or g
 
 #### Scenario: Durable credential creation is blocked by default
 
-- **WHEN** a `POST` or `PUT` under `/api/v4/` runs inside the agent container on any of: `personal_access_tokens/:id/rotate` (`:id` may be `self`), `user/personal_access_tokens`, `users/:id/personal_access_tokens`, `users/:id/impersonation_tokens`, `(projects|groups)/:id/access_tokens` and `.../access_tokens/:id/rotate`, `(projects|groups)/:id/deploy_tokens`, `deploy_tokens`, `groups/:id/service_accounts/:id/personal_access_tokens` and its `rotate`, `user/keys`, `user/gpg_keys`, `users/:id/keys`, `users/:id/gpg_keys`, `(projects|groups)/:id/deploy_keys` and `.../deploy_keys/:id/enable`, `user/runners`, `runners`, `runners/:id/reset_authentication_token`, `runners/reset_registration_token`, `(projects|groups)/:id/runners/reset_registration_token`, `projects/:id/triggers`, `projects/:id/cluster_agents/:id/tokens`, `deploy_keys`, `(projects|groups)/:id/members` and `.../invitations` (and `PUT` on a single member or invitation)
+- **WHEN** a `POST` or `PUT` under `/api/v4/` runs inside the agent container on any of: `personal_access_tokens/:id/rotate` (`:id` may be `self`), `user/personal_access_tokens`, `users/:id/personal_access_tokens`, `users/:id/impersonation_tokens`, `(projects|groups)/:id/access_tokens` and `.../access_tokens/:id/rotate`, `(projects|groups)/:id/deploy_tokens`, `deploy_tokens`, `groups/:id/service_accounts/:id/personal_access_tokens` and its `rotate`, `user/keys`, `user/gpg_keys`, `users/:id/keys`, `users/:id/gpg_keys`, `(projects|groups)/:id/deploy_keys` and `.../deploy_keys/:id/enable`, `user/runners`, `runners`, `runners/:id/reset_authentication_token`, `runners/reset_registration_token`, `(projects|groups)/:id/runners/reset_registration_token`, `projects/:id/triggers`, `projects/:id/cluster_agents/:id/tokens`, `deploy_keys`, `(projects|groups)/:id/members` and `.../invitations` (and `PUT` on a single member or invitation), `(projects|groups)/:id/share`, `.../transfer`, `.../hooks` (and `PUT` on a single hook), `.../access_requests/:id/approve`, `projects/:id/remote_mirrors` (and `PUT` on a single mirror), `hooks`
 - **THEN** the response is `403` naming the claude-docker glab-proxy policy
 - **AND** the request never reaches GitLab
 

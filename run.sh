@@ -636,6 +636,7 @@ build_env_args() {
 
 discover_tokens() {
   local _ws0 _glab_cfg _glab_remote _glab_default _glab_tried _glab_host _glab_from _glab_discovered=0
+  local _glab_origin _glab_unbound
   # GitHub token discovery — shared, unchanged, by --gh and --gh-direct: host
   # env (GH_TOKEN/GITHUB_TOKEN) wins; else fall back to the gh CLI's active
   # token so users authenticated via `gh auth login` don't have to export
@@ -1069,7 +1070,10 @@ CADDY
 # to the client (actions.*.header.Authorization). The default policy blocks
 # project/group deletion and the REST calls that grant access that outlives
 # the session: tokens, SSH/GPG/deploy keys, runner, trigger and cluster-agent
-# tokens, and project/group members and invitations. Best effort: GraphQL is not filtered, and token scope is the real
+# tokens, project/group members, invitations, shares, transfers, webhooks,
+# push mirrors and access-request approvals. A PUT on a bare project or
+# group path (its settings, visibility included) is refused too: Caddy can't
+# read the body to tell a visibility change apart. Best effort: GraphQL is not filtered, and token scope is the real
 # limit. Both match the raw request URI: path_regexp sees the decoded path, so
 # a URL-encoded project path (group%2Fproject) would slip past it. A raw match
 # can be dodged by percent-encoding a letter (/api/v4/%70rojects/1), which
@@ -1123,11 +1127,16 @@ stage_glab_proxy_site() {
 			}
 		}
 		respond @glab_proxy_delete "claude-docker glab-proxy policy: project and group deletion is blocked by default. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		@glab_proxy_settings {
+			method PUT
+			vars_regexp {http.request.uri} ^/+api/+v4/+(projects|groups)/+[^/?]+/*(\?.*)?$
+		}
+		respond @glab_proxy_settings "claude-docker glab-proxy policy: changing a project's or group's settings is blocked by default, since visibility and access settings can open access that outlives the session. Bypass the proxy with --glab-direct to change them." 403
 		@glab_proxy_mint {
 			method POST PUT
-			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys)(\.json)?/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys|(projects|groups)/+[^/?]+/+(share|transfer|hooks(/+[^/?]+)?|access_requests/+[^/?]+/+approve)|projects/+[^/?]+/+remote_mirrors(/+[^/?]+)?|hooks)(\.json)?/*(\?.*)?$
 		}
-		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding SSH, GPG or deploy keys, and adding or changing members is blocked by default, since it would grant access that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding keys, members, shares, webhooks or push mirrors, approving access requests and transfers are blocked by default, since they grant access that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		import /etc/caddy/glab-policy.caddy
 
 		reverse_proxy {$GLAB_PROXY_UPSTREAM}

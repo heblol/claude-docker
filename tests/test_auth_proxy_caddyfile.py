@@ -391,6 +391,16 @@ class SidecarBehaviourTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.glab("GET", path)[0], 200)
 
+    def test_glab_default_policy_blocks_project_and_group_settings_changes(self):
+        self._start()
+        for path in ("/api/v4/projects/123", "/api/v4/projects/g%2Fp?visibility=public",
+                     "/api/v4/groups/42/", "//api/v4/projects/1.json"):
+            with self.subTest(path=path):
+                st, body = self.glab("PUT", path)
+                self.assertEqual(st, 403)
+                self.assertIn("claude-docker glab-proxy policy", body)
+        self.assertEqual(self.glab("GET", "/api/v4/projects/123")[0], 200)
+
     def test_glab_default_policy_blocks_token_minting(self):
         self._start()
         blocked = (
@@ -435,6 +445,17 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("PUT", "/api/v4/projects/g%2Fp/members/7"),
             ("POST", "/api/v4/groups/42/invitations"),
             ("PUT", "/api/v4/projects/123/invitations/a@b.example"),
+            ("POST", "/api/v4/projects/123/share"),
+            ("POST", "/api/v4/groups/42/share"),
+            ("PUT", "/api/v4/projects/123/transfer"),
+            ("POST", "/api/v4/groups/42/transfer"),
+            ("POST", "/api/v4/projects/123/hooks"),
+            ("PUT", "/api/v4/projects/123/hooks/9"),
+            ("POST", "/api/v4/groups/42/hooks"),
+            ("POST", "/api/v4/hooks"),
+            ("POST", "/api/v4/projects/123/remote_mirrors"),
+            ("PUT", "/api/v4/projects/g%2Fp/remote_mirrors/3"),
+            ("PUT", "/api/v4/groups/42/access_requests/7/approve"),
         )
         for method, path in blocked:
             with self.subTest(method=method, path=path):
@@ -451,6 +472,9 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("POST", "/api/v4/projects/123/runners"),
             ("GET", "/api/v4/projects/123/members"),
             ("GET", "/api/v4/deploy_keys"),
+            ("GET", "/api/v4/projects/123/hooks"),
+            ("POST", "/api/v4/projects/123/hooks/9/test/push_events"),
+            ("PUT", "/api/v4/projects/123/issues/1"),
             ("POST", "/api/v4/projects/1/issues"),
             ("POST", "/api/v4/projects/1/merge_requests"),
         )
