@@ -56,25 +56,12 @@ CVE-2026-97031 exp:2026-11-04
 # golang.org/x/net (fixed in Go 1.27.2 / x/net 0.60.0). Trivy's DB picked it up
 # after 2026-10-09. Same expiry and reason.
 CVE-2026-78669 exp:2026-11-04
-# npm (pins/npm.env) vendors brace-expansion 5.0.9; the fix needs 5.0.10,
-# released upstream 2026-09-14. No npm release bundles it yet: 11.21.0 and
-# 12.2.0 (2026-09-30) still ship 5.0.9. Only npm's own tree carries it. npm is
-# now an automated pin, so the weekly refresh bumps it once a release carrying
-# the fix has soaked (7 days). npm releases every 1-4 weeks, so 2026-11-04
-# allows two release cycles plus the soak. At expiry, check the bundled version
-# in the pinned npm and drop this if it's fixed.
-CVE-2026-102276 exp:2026-11-04
-# Same package and gap as above; the fix needs brace-expansion 5.0.11.
-CVE-2026-102278 exp:2026-11-04
-# npm vendors undici 6.28.0; the fix needs 6.28.1, released upstream
-# 2026-09-04 and not yet bundled by 11.21.0 or 12.2.0. Same expiry reasoning.
-CVE-2026-19534 exp:2026-11-04
 # undici CVE-2026-109869 (DoS on an unhandled stream error); the fix needs
-# 6.29.1, released upstream 2026-10-15. npm 12.2.0 (pins/npm.env) vendors
-# 6.28.0, and npm 12.2.1, the latest, still ships 6.29.0. pnpm 12.12.1
-# (pins/pnpm.env) vendors 6.29.0; pnpm 12.15.0 (2026-10-21) carries 6.29.1 and
-# leaves the 7-day soak on 2026-10-28, so the weekly refresh picks it up. Same
-# expiry reasoning as above. At expiry, check the undici bundled by both pins
+# 6.29.1, released upstream 2026-10-15. npm 12.2.1 (pins/npm.env), the
+# latest, vendors 6.29.0. No npm release carries 6.29.1 yet, and npm releases
+# every 1-4 weeks. pnpm 12.12.1 (pins/pnpm.env) vendors 6.29.0; pnpm 12.15.0
+# (2026-10-21) carries 6.29.1 and leaves the 7-day soak on 2026-10-28, so the
+# weekly refresh picks it up. At expiry, check the undici bundled by both pins
 # and drop this if both are fixed.
 CVE-2026-109869 exp:2026-11-04
 # Scope note: trivy ignores are per-CVE-ID and image-wide, unlike the path- and
