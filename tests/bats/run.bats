@@ -764,6 +764,29 @@ http_access allow all" ]
   [[ "$output" != *s3cret* ]]
 }
 
+@test "build_git_config: a URL with no usable host gets no credential helper" {
+  for url in 'https://' 'https:///' 'https://*.example.com' 'https:// evil'; do
+    ENV_ARGS=() GIT_CFG=()
+    WITH_AZ=1 WITH_GLAB_DIRECT=1 AZURE_DEVOPS_ORG_URL=$url GITLAB_HOST=$url
+    run build_git_config
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--az: AZURE_DEVOPS_ORG_URL has no usable host"* ]]
+    [[ "$output" == *"--glab-direct: GITLAB_HOST has no usable host"* ]]
+    build_git_config 2>/dev/null
+    [[ "$(lines_of "${ENV_ARGS[@]}")" != *credential.* ]]
+  done
+}
+
+@test "build_git_config: an empty-host Azure DevOps URL never offers the PAT" {
+  unset -f git
+  WITH_AZ=1 AZURE_DEVOPS_ORG_URL=https://
+  build_git_config 2>/dev/null
+  for a in "${ENV_ARGS[@]}"; do [ "$a" = -e ] || export "$a"; done
+  export AZURE_DEVOPS_EXT_PAT=s3cret GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=
+  run git credential fill <<<$'protocol=https\nhost=evil.example.com\n'
+  [[ "$output" != *s3cret* ]]
+}
+
 # --- forward_git_identity / build_flags_env ---
 
 @test "forward_git_identity: forwards name and email" {
