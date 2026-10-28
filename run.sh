@@ -8,11 +8,12 @@
 IMAGE="${CLAUDE_DOCKER_IMAGE:-claude-code:local}"
 
 # Auth-proxy sidecar image (Caddy), used by --gh / --glab when a host token is
-# found and by --api (see openspec/specs/gh-auth-proxy and friends). Digest-pinned and deliberately
-# excluded from update_pins.py: a Caddy upgrade can change Caddyfile
-# directive semantics — i.e. this security-critical config — so bumping it
-# is a reviewed change (changelog + config-compatibility check), not a
-# routine automated bump. run.sh cannot read pins/, so the pin lives here.
+# found and by --api (see openspec/specs/gh-auth-proxy and friends).
+# Digest-pinned and deliberately excluded from update_pins.py: a Caddy
+# upgrade can change Caddyfile directive semantics — i.e. this
+# security-critical config — so bumping it is a reviewed change (changelog +
+# config-compatibility check), not a routine automated bump. run.sh cannot
+# read pins/, so the pin lives here.
 PROXY_IMAGE="${CLAUDE_DOCKER_PROXY_IMAGE:-caddy:2.11.4@sha256:844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9}"
 
 # --egress-lock proxy image: squid on Alpine, built on the host the first time
@@ -965,6 +966,8 @@ build_env_args() {
 
 discover_tokens() {
   local _ws0 _glab_cfg _glab_remote _glab_default _glab_tried _glab_host _glab_from _glab_discovered=0
+  local _glab_origin _glab_unbound _glab_flag=--glab
+  [ "$WITH_GLAB_DIRECT" = "1" ] && _glab_flag=--glab-direct
   # GitHub token discovery — shared, unchanged, by --gh and --gh-direct: host
   # env (GH_TOKEN/GITHUB_TOKEN) wins; else fall back to the gh CLI's active
   # token so users authenticated via `gh auth login` don't have to export
@@ -1101,17 +1104,12 @@ discover_tokens() {
             echo "claude-docker: --glab: GitLab host '$_glab_from' is plain http, which the auth proxy can't serve; use --glab-direct" >&2
             exit 1 ;;
         esac
-        case "${_glab_host%:*}" in
-          *[!0-9.]*) ;;
-          *)
-            echo "claude-docker: --glab: GitLab host '$_glab_host' is an IP address, which the auth proxy can't intercept by name; use --glab-direct" >&2
-            exit 1 ;;
-        esac
-        case "$_glab_host" in
-          *\[*|*:*:*)
-            echo "claude-docker: --glab: GitLab host '$_glab_host' is an IP address, which the auth proxy can't intercept by name; use --glab-direct" >&2
-            exit 1 ;;
-        esac
+        # IPv4 (only digits and dots before the port) or IPv6 (brackets or
+        # more than one colon).
+        if [[ "${_glab_host%:*}" != *[!0-9.]* || "$_glab_host" == *\[* || "$_glab_host" == *:*:* ]]; then
+          echo "claude-docker: --glab: GitLab host '$_glab_host' is an IP address, which the auth proxy can't intercept by name; use --glab-direct" >&2
+          exit 1
+        fi
         # The host lands in the Caddyfile as the site address and in
         # --add-host: allow only a hostname with an optional port.
         if ! [[ "$_glab_host" =~ ^[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
@@ -1132,9 +1130,9 @@ discover_tokens() {
         ENV_ARGS+=("-e" "GITLAB_HOST")
       fi
     elif command -v glab >/dev/null 2>&1; then
-      echo "claude-docker: --glab: no GitLab token found for ${_glab_tried:-any host}; set GITLAB_HOST=<host> (after host 'glab auth login') or export GITLAB_TOKEN" >&2
+      echo "claude-docker: $_glab_flag: no GitLab token found for ${_glab_tried:-any host}; set GITLAB_HOST=<host> (after host 'glab auth login') or export GITLAB_TOKEN" >&2
     else
-      echo "claude-docker: --glab: glab not on host PATH, no GitLab token to forward; export GITLAB_TOKEN" >&2
+      echo "claude-docker: $_glab_flag: glab not on host PATH, no GitLab token to forward; export GITLAB_TOKEN" >&2
     fi
   fi
 }
@@ -1429,10 +1427,29 @@ CADDY
 # on git smart-HTTP, nothing anywhere else (web UI paths don't serve glab or
 # git). Not on LFS either: the batch response echoes a usable credential back
 # to the client (actions.*.header.Authorization). The default policy blocks
-# project/group deletion and the REST calls that create or rotate tokens (they
-# return a real credential). Both match the raw request URI: path_regexp sees
-# the decoded path, so a URL-encoded project path (group%2Fproject) would slip
-# past it. Request headers are dropped from the access log.
+# project/group deletion and the REST calls that grant access that outlives
+# the session: tokens, SSH/GPG/deploy keys, runner, trigger and cluster-agent
+# tokens, project/group members (added, imported or approved), invitations,
+# LDAP/SAML group links, shares, transfers, webhooks, integrations, push and
+# pull mirrors, pipeline schedules and access-request approvals, plus the admin
+# calls that create or edit users and OAuth applications or change instance
+# settings. Adding an email is blocked too: a verified secondary address can
+# receive a password reset, which hands over the whole account. A PUT on a bare project or group
+# path (its settings, visibility included) is refused too: Caddy can't read
+# the body to tell a visibility change apart. Best effort: GraphQL is not
+# filtered, and token scope is the real limit. Both match the raw request
+# URI: path_regexp sees the decoded path, so a URL-encoded project path
+# (group%2Fproject) would slip past it. A raw match
+# can be dodged by percent-encoding a letter (/api/v4/%70rojects/1), which
+# GitLab's router decodes, so a write (DELETE/POST/PUT, what the policy
+# checks) that escapes an unreserved character is refused; reads pass, since
+# GitLab's own docs encode dots in file paths. Deletion also matches POST:
+# Rack::MethodOverride turns a POST carrying _method=delete or
+# X-HTTP-Method-Override: DELETE into a DELETE. The only POSTs on a bare
+# project or group path are the imports, which are let through. Request
+# {http.request.uri} is the origin-form path and query even for an
+# absolute-form request line (DELETE https://host/api/...), so the anchored
+# matches cover that too. Request headers are dropped from the access log.
 stage_glab_proxy_site() {
   if [ -n "${CLAUDE_DOCKER_GLAB_POLICY:-}" ]; then
     cp "$CLAUDE_DOCKER_GLAB_POLICY" "$1/glab-policy.caddy" || exit 1
@@ -1460,16 +1477,30 @@ stage_glab_proxy_site() {
 		@glab_proxy_git path_regexp (/info/refs|/git-upload-pack|/git-receive-pack)$
 		request_header @glab_proxy_git Authorization "{env.GLAB_PROXY_BASIC}"
 
+		@glab_proxy_escaped {
+			method DELETE POST PUT
+			vars_regexp {http.request.uri} ^[^?]*%(2[DEde]|3[0-9]|4[1-9A-Fa-f]|5[0-9AFaf]|6[1-9A-Fa-f]|7[0-9AEae])
+		}
+		respond @glab_proxy_escaped "claude-docker glab-proxy policy: a percent-encoded letter, digit or -._~ in the path is refused, since it could hide a blocked call. Send it unencoded, or bypass the proxy entirely with --glab-direct." 403
 		@glab_proxy_delete {
-			method DELETE
+			method DELETE POST
 			vars_regexp {http.request.uri} ^/+api/+v4/+(projects|groups)/+[^/?]+/*(\?.*)?$
+			not {
+				method POST
+				vars_regexp {http.request.uri} ^/+api/+v4/+(projects|groups)/+(import|remote-import|remote-import-s3)(\.json)?/*(\?.*)?$
+			}
 		}
 		respond @glab_proxy_delete "claude-docker glab-proxy policy: project and group deletion is blocked by default. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		@glab_proxy_settings {
+			method PUT
+			vars_regexp {http.request.uri} ^/+api/+v4/+(projects|groups)/+[^/?]+/*(\?.*)?$
+		}
+		respond @glab_proxy_settings "claude-docker glab-proxy policy: changing a project's or group's settings is blocked by default, since visibility and access settings can open access that outlives the session. Bypass the proxy with --glab-direct to change them." 403
 		@glab_proxy_mint {
 			method POST PUT
-			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens)(\.json)?/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners|emails)|users/+[^/?]+/+(keys|gpg_keys|emails)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys|(projects|groups)/+[^/?]+/+(share|transfer|hooks(/+[^/?]+)?|access_requests/+[^/?]+/+approve)|projects/+[^/?]+/+remote_mirrors(/+[^/?]+)?|projects/+[^/?]+/+mirror/+pull|hooks|projects/+[^/?]+/+import_project_members/+[^/?]+|(projects|groups)/+[^/?]+/+members/+[^/?]+/+approve|groups/+[^/?]+/+(ldap|saml)_group_links(/+[^/?]+)?|(projects|groups)/+[^/?]+/+(integrations|services)(/+[^/?]+)?|projects/+[^/?]+/+pipeline_schedules(/+[^/?]+(/+take_ownership)?)?|users(/+[^/?]+)?|applications|application/+settings)(\.json)?/*(\?.*)?$
 		}
-		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating access tokens is blocked by default, since the response would hand a real credential to the container. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding keys, emails, members, group links, shares, webhooks, integrations, push or pull mirrors, approving access requests or members, pipeline schedules, transfers, and the admin calls that create users, OAuth applications or change instance settings are blocked by default, since they grant access or a data feed that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		import /etc/caddy/glab-policy.caddy
 
 		reverse_proxy {$GLAB_PROXY_UPSTREAM}
@@ -1488,7 +1519,7 @@ CADDY
 # staged depends on which variable the host set, and a header the host gave no
 # value for is removed, so a claude.ai OAuth bearer from the volume never
 # reaches the gateway. CLAUDE_DOCKER_API_CA joins the public roots (not
-# replaces them) for the upstream connection.
+# replaces them) for an https upstream connection.
 stage_api_proxy_site() {
   local api_base api_rest
   api_base="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
@@ -1516,7 +1547,9 @@ stage_api_proxy_site() {
     echo 'request_header -Authorization' >>"$1/api-cred.caddy" || exit 1
   fi
 
-  if [ -n "${CLAUDE_DOCKER_API_CA:-}" ]; then
+  # Caddy rejects TLS transport settings on an http:// upstream, and a CA has
+  # nothing to verify there.
+  if [ -n "${CLAUDE_DOCKER_API_CA:-}" ] && [ "${API_PROXY_UPSTREAM%%://*}" = "https" ]; then
     cp "$CLAUDE_DOCKER_API_CA" "$1/api-ca.pem" || exit 1
     cat <<'CADDY' >"$1/api-transport.caddy" || exit 1
 transport http {
@@ -2032,11 +2065,17 @@ stage_glab_config() {
   MOUNT_ARGS+=("-v" "$(hostpath "$stage/glab-config.yml"):/root/.config/glab-cli/config.yml:ro")
   # glab sends API calls to the host's api_host, not the host itself. A
   # different api_host is not intercepted, so those calls would carry only the
-  # placeholder and fail 401.
+  # placeholder and fail 401. Host keys sit at the indent of the first line
+  # under hosts: (glab writes four spaces; hand-written configs often use two).
   if [ "$GLAB_SIDECAR_ACTIVE" = "1" ]; then
     api_host=$(awk -v h="$GLAB_PROXY_HOST" '
-      /^[^[:space:]]/ { in_hosts = ($0 ~ /^hosts:/); in_host = 0; next }
-      in_hosts && /^  [^[:space:]]/ { k = $1; sub(/:$/, "", k); gsub(/["'"'"']/, "", k); in_host = (k == h); next }
+      /^[[:space:]]*(#|$)/ { next }
+      /^[^[:space:]]/ { in_hosts = ($0 ~ /^hosts:/); in_host = 0; ind = ""; next }
+      in_hosts {
+        match($0, /^[[:space:]]+/); cur = substr($0, 1, RLENGTH)
+        if (ind == "") ind = cur
+        if (cur == ind) { k = $1; sub(/:$/, "", k); gsub(/["'"'"']/, "", k); in_host = (k == h); next }
+      }
       in_host && $1 == "api_host:" { v = $2; gsub(/["'"'"']/, "", v); print v; exit }
     ' "$GLAB_SRC/config.yml" 2>/dev/null) || true
     if [ -n "$api_host" ] && [ "$api_host" != "$GLAB_PROXY_HOST" ] && [ "$api_host" != "${GLAB_PROXY_HOST%%:*}" ] \

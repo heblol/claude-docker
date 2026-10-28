@@ -73,6 +73,20 @@ class ConstantConfigTest(unittest.TestCase):
         self.assertIn("{env.GLAB_PROXY_BEARER}", found["sites/glab.caddy"])
         self.assertIn("import /etc/caddy/sites/*.caddy", found["Caddyfile"])
 
+    def test_api_ca_transport_only_for_an_https_upstream(self):
+        with tempfile.TemporaryDirectory() as d:
+            ca = Path(d) / "ca.pem"
+            ca.write_text("x")
+            for base, staged in (("https://gw.internal/a", True), ("http://gw.internal:8000", False)):
+                with self.subTest(base=base):
+                    out = Path(d) / base.split(":")[0]
+                    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                           "ANTHROPIC_BASE_URL": base, "CLAUDE_DOCKER_API_CA": str(ca)}
+                    subprocess.run(["bash", "-c", 'source "$1"; stage_proxy_root "$2"; stage_api_proxy_site "$2"',
+                                    "_", str(RUN_SH), str(out)], env=env, check=True)
+                    self.assertEqual("tls_trust_pool" in (out / "api-transport.caddy").read_text(), staged)
+                    self.assertEqual((out / "api-ca.pem").exists(), staged)
+
     def test_credential_lines_are_literals(self):
         lines = re.findall(r"echo (\S.*?) >>\"\$1/api-cred\.caddy\"", RUN_SH.read_text())
         self.assertEqual(len(lines), 4)
@@ -116,7 +130,7 @@ class _Recorder(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    do_GET = do_POST = do_DELETE = do_HEAD = _handle
+    do_GET = do_POST = do_PUT = do_DELETE = do_HEAD = _handle
 
     def log_message(self, *_):
         pass
@@ -329,13 +343,63 @@ class SidecarBehaviourTest(unittest.TestCase):
         for path in ("/api/v4/projects/123", "/api/v4/projects/123/", "/api/v4/projects/g%2Fsub%2Fp",
                      "/api/v4/projects/g%2fp?x=1", "//api/v4/groups/42", "/api/v4//projects/1",
                      "/api//v4/projects/1", "/api/v4/projects/1.json"):
-            with self.subTest(path=path):
-                st, body = self.glab("DELETE", path)
-                self.assertEqual(st, 403)
-                self.assertIn("claude-docker glab-proxy policy", body)
+            for method in ("DELETE", "POST"):  # POST: Rack::MethodOverride (_method=delete)
+                with self.subTest(method=method, path=path):
+                    st, body = self.glab(method, path)
+                    self.assertEqual(st, 403)
+                    self.assertIn("claude-docker glab-proxy policy", body)
+        st, _ = self.glab("POST", "/api/v4/projects/123", {"X-HTTP-Method-Override": "DELETE"})
+        self.assertEqual(st, 403)
         for path in ("/api/v4/projects/123/repository/branches/x", "/api/v4/projects/123/issues/1"):
             with self.subTest(path=path):
                 self.assertEqual(self.glab("DELETE", path)[0], 200)
+        # The imports are the only POSTs GitLab routes on a bare project or group path.
+        for path in ("/api/v4/projects/user/5", "/api/v4/projects/import", "/api/v4/projects/remote-import",
+                     "/api/v4/projects/remote-import-s3", "/api/v4/groups/import", "/api//v4/projects/import.json"):
+            with self.subTest(path=path):
+                self.assertEqual(self.glab("POST", path)[0], 200)
+
+    def test_glab_default_policy_covers_an_absolute_form_target(self):
+        # {http.request.uri} is origin-form even for an absolute-form request
+        # line, so the anchored matches still apply.
+        self._start()
+        for method, target in (("DELETE", "https://gl.example.test/api/v4/projects/1"),
+                               ("POST", "https://gl.example.test/api/v4/user/personal_access_tokens")):
+            with self.subTest(method=method, target=target):
+                st, body = self.glab(method, target)
+                self.assertEqual(st, 403)
+                self.assertIn("claude-docker glab-proxy policy", body)
+
+    def test_glab_default_policy_refuses_escaped_unreserved_characters(self):
+        # GitLab's router decodes these, so they could hide a blocked call.
+        self._start()
+        for method, path in (("DELETE", "/api/v4/%70rojects/123"), ("DELETE", "/%61pi/v4/groups/1"),
+                             ("DELETE", "/api/v4/projects/%31%32%33"), ("DELETE", "/api/v4/gro%75ps/1"),
+                             ("POST", "/api/v4/user/personal%5Faccess%5ftokens"),
+                             ("POST", "/api/v4/personal_access_tokens/self/rotate%2Ejson"),
+                             ("POST", "/g/p.git/git-%72eceive-pack"),
+                             ("PUT", "/api/v4/personal_access_tokens/self/%72otate")):
+            with self.subTest(method=method, path=path):
+                st, body = self.glab(method, path)
+                self.assertEqual(st, 403)
+                self.assertIn("claude-docker glab-proxy policy", body)
+        # Reads are not checked (GitLab's docs encode dots in file paths), nor
+        # are reserved characters or the query string.
+        for path in ("/api/v4/projects/g%2Fp/repository/files/a%20b.txt/raw",
+                     "/api/v4/projects/1/repository/files/app%2Fmodels%2Fkey%2Erb?ref=main",
+                     "/api/v4/projects/g%2fp/issues?search=%61"):
+            with self.subTest(path=path):
+                self.assertEqual(self.glab("GET", path)[0], 200)
+
+    def test_glab_default_policy_blocks_project_and_group_settings_changes(self):
+        self._start()
+        for path in ("/api/v4/projects/123", "/api/v4/projects/g%2Fp?visibility=public",
+                     "/api/v4/groups/42/", "//api/v4/projects/1.json"):
+            with self.subTest(path=path):
+                st, body = self.glab("PUT", path)
+                self.assertEqual(st, 403)
+                self.assertIn("claude-docker glab-proxy policy", body)
+        self.assertEqual(self.glab("GET", "/api/v4/projects/123")[0], 200)
 
     def test_glab_default_policy_blocks_token_minting(self):
         self._start()
@@ -361,6 +425,56 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("POST", "/api/v4/personal_access_tokens/self/rotate.json"),
             ("POST", "/api/v4/projects/123/access_tokens.json?x=1"),
             ("POST", "/api/v4/deploy_tokens.json/"),
+            ("POST", "/api/v4/user/keys"),
+            ("POST", "/api/v4/user/gpg_keys"),
+            ("POST", "/api/v4/user/emails"),
+            ("POST", "/api/v4/users/5/emails"),
+            ("POST", "/api/v4/users/5/keys"),
+            ("POST", "/api/v4/users/5/gpg_keys"),
+            ("POST", "/api/v4/projects/123/deploy_keys"),
+            ("POST", "/api/v4/projects/g%2Fp/deploy_keys/9/enable"),
+            ("POST", "/api/v4/user/runners"),
+            ("POST", "/api/v4/runners"),
+            ("POST", "/api/v4/runners/7/reset_authentication_token"),
+            ("POST", "/api/v4/runners/reset_registration_token"),
+            ("POST", "/api/v4/projects/123/runners/reset_registration_token"),
+            ("POST", "/api/v4/groups/42/runners/reset_registration_token"),
+            ("POST", "/api/v4/projects/123/triggers"),
+            ("POST", "/api/v4/projects/123/cluster_agents/4/tokens"),
+            ("POST", "/api/v4/deploy_keys"),
+            ("POST", "/api/v4/projects/123/members"),
+            ("POST", "/api/v4/groups/42/members"),
+            ("PUT", "/api/v4/projects/g%2Fp/members/7"),
+            ("POST", "/api/v4/groups/42/invitations"),
+            ("PUT", "/api/v4/projects/123/invitations/a@b.example"),
+            ("POST", "/api/v4/projects/123/share"),
+            ("POST", "/api/v4/groups/42/share"),
+            ("PUT", "/api/v4/projects/123/transfer"),
+            ("POST", "/api/v4/groups/42/transfer"),
+            ("POST", "/api/v4/projects/123/hooks"),
+            ("PUT", "/api/v4/projects/123/hooks/9"),
+            ("POST", "/api/v4/groups/42/hooks"),
+            ("POST", "/api/v4/hooks"),
+            ("POST", "/api/v4/projects/123/remote_mirrors"),
+            ("PUT", "/api/v4/projects/g%2Fp/remote_mirrors/3"),
+            ("PUT", "/api/v4/projects/123/mirror/pull"),
+            ("POST", "/api/v4/projects/123/mirror/pull"),
+            ("PUT", "/api/v4/groups/42/access_requests/7/approve"),
+            ("POST", "/api/v4/projects/123/import_project_members/77"),
+            ("PUT", "/api/v4/groups/42/members/7/approve"),
+            ("PUT", "/api/v4/projects/123/members/7/approve"),
+            ("POST", "/api/v4/groups/42/ldap_group_links"),
+            ("POST", "/api/v4/groups/42/saml_group_links"),
+            ("PUT", "/api/v4/projects/123/integrations/emails-on-push"),
+            ("PUT", "/api/v4/groups/42/integrations/slack"),
+            ("PUT", "/api/v4/projects/123/services/slack"),
+            ("POST", "/api/v4/projects/123/pipeline_schedules"),
+            ("PUT", "/api/v4/projects/123/pipeline_schedules/5"),
+            ("POST", "/api/v4/projects/123/pipeline_schedules/5/take_ownership"),
+            ("POST", "/api/v4/users"),
+            ("PUT", "/api/v4/users/7"),
+            ("POST", "/api/v4/applications"),
+            ("PUT", "/api/v4/application/settings"),
         )
         for method, path in blocked:
             with self.subTest(method=method, path=path):
@@ -372,6 +486,21 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("GET", "/api/v4/personal_access_tokens"),
             ("GET", "/api/v4/personal_access_tokens/self"),
             ("GET", "/api/v4/projects/123/access_tokens"),
+            ("GET", "/api/v4/user/keys"),
+            ("GET", "/api/v4/user/emails"),
+            ("GET", "/api/v4/projects/123/triggers"),
+            ("POST", "/api/v4/projects/123/runners"),
+            ("GET", "/api/v4/projects/123/members"),
+            ("GET", "/api/v4/deploy_keys"),
+            ("GET", "/api/v4/projects/123/hooks"),
+            ("POST", "/api/v4/projects/123/hooks/9/test/push_events"),
+            ("PUT", "/api/v4/projects/123/issues/1"),
+            ("GET", "/api/v4/projects/123/integrations"),
+            ("GET", "/api/v4/groups/42/ldap_group_links"),
+            ("GET", "/api/v4/projects/123/pipeline_schedules"),
+            ("POST", "/api/v4/projects/123/pipeline_schedules/5/play"),
+            ("GET", "/api/v4/users"),
+            ("POST", "/api/v4/projects/123/pipeline"),
             ("POST", "/api/v4/projects/1/issues"),
             ("POST", "/api/v4/projects/1/merge_requests"),
         )

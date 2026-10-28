@@ -572,6 +572,26 @@ http_access allow all" ]
 
 # --- discover_tokens ---
 
+@test "glab_host_of: host[:port] from a URL or a bare host" {
+  local in want
+  while IFS='|' read -r in want; do
+    [ "$(glab_host_of "$in")" = "$want" ] || { echo "glab_host_of '$in' = '$(glab_host_of "$in")', want '$want'"; return 1; }
+  done <<'TABLE'
+gitlab.example.com|gitlab.example.com
+gitlab.example.com:8443|gitlab.example.com:8443
+https://gitlab.example.com|gitlab.example.com
+https://gitlab.example.com/|gitlab.example.com
+https://gitlab.example.com:8443/group/p.git|gitlab.example.com:8443
+https://user@gitlab.example.com/g/p|gitlab.example.com
+https://user:p@ss@gitlab.example.com/g|gitlab.example.com
+https://gitlab.example.com/g/a@b|gitlab.example.com
+ssh://git@gitlab.example.com:2222/g/p.git|gitlab.example.com:2222
+http://gitlab.internal/x|gitlab.internal
+https://|
+|
+TABLE
+}
+
 @test "discover_tokens: --gh-direct forwards the gh CLI token by name" {
   WITH_GH_DIRECT=1
   discover_tokens
@@ -659,7 +679,7 @@ http_access allow all" ]
 }
 
 @test "discover_tokens: --glab refuses hosts the proxy can't serve" {
-  for h in http://gitlab.internal 10.0.0.5 10.0.0.5:8443 "[::1]:8443"; do
+  for h in http://gitlab.internal 10.0.0.5 10.0.0.5:8443 "[::1]:8443" fe80::1; do
     WITH_GLAB=1 GITLAB_HOST="$h"
     SEEN_PATHS=("$WS")
     run discover_tokens
@@ -724,6 +744,15 @@ http_access allow all" ]
   run discover_tokens
   [ "$status" -eq 0 ]
   [[ "$output" == *"--glab: no GitLab token found for gitlab.example.com"* ]]
+}
+
+@test "discover_tokens: --glab-direct with no token names --glab-direct" {
+  glab() { return 0; }
+  WITH_GLAB_DIRECT=1 GITLAB_HOST=gitlab.example.com
+  SEEN_PATHS=("$WS")
+  run discover_tokens
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--glab-direct: no GitLab token found for gitlab.example.com"* ]]
 }
 
 # --- build_git_config ---
@@ -1603,14 +1632,15 @@ glab_config_setup() {
   cat >"$GLAB_SRC/config.yml" <<'YML'
 git_protocol: https
 hosts:
-  gl.example.com:
-    token: glpat-one
-    oauth2_refresh_token: refresh-one
-    api_host: gl.example.com
-    use_keyring: true
-  gitlab.com:
-    job_token: "glcbt-two"
-    api_host: gitlab.com
+    # glab writes hosts four spaces deep and their keys eight.
+    gl.example.com:
+        token: glpat-one
+        oauth2_refresh_token: refresh-one
+        api_host: gl.example.com
+        use_keyring: true
+    gitlab.com:
+        job_token: "glcbt-two"
+        api_host: gitlab.com
 YML
 }
 
@@ -1621,9 +1651,9 @@ YML
   [ "$status" -eq 0 ] && [ -z "$output" ]
   stage_glab_config 2>/dev/null
   run ! grep -Eq 'glpat-one|refresh-one|glcbt-two' "$stage/glab-config.yml"
-  grep -qx '    token: ""' "$stage/glab-config.yml"
-  grep -qx '    use_keyring: false' "$stage/glab-config.yml"
-  grep -qx '    api_host: gl.example.com' "$stage/glab-config.yml"
+  grep -qx '        token: ""' "$stage/glab-config.yml"
+  grep -qx '        use_keyring: false' "$stage/glab-config.yml"
+  grep -qx '        api_host: gl.example.com' "$stage/glab-config.yml"
   [ "$(wc -l <"$stage/glab-config.yml")" -eq "$(wc -l <"$GLAB_SRC/config.yml")" ]
 }
 
@@ -1638,17 +1668,34 @@ YML
   glab_config_setup
   stage_glab_config
   grep -q glpat-one "$stage/glab-config.yml"
-  grep -qx '    use_keyring: false' "$stage/glab-config.yml"
+  grep -qx '        use_keyring: false' "$stage/glab-config.yml"
 }
 
 @test "stage_glab_config: warns when api_host is not the proxied host" {
   glab_config_setup
-  sed 's/    api_host: gl.example.com/    api_host: api.gl.example.com/' "$GLAB_SRC/config.yml" >"$BATS_TEST_TMPDIR/c.yml"
+  sed 's/        api_host: gl.example.com/        api_host: api.gl.example.com/' "$GLAB_SRC/config.yml" >"$BATS_TEST_TMPDIR/c.yml"
   mv "$BATS_TEST_TMPDIR/c.yml" "$GLAB_SRC/config.yml"
   GLAB_SIDECAR_ACTIVE=1 GLAB_PROXY_HOST=gl.example.com
   run stage_glab_config
   [ "$status" -eq 0 ]
   [[ "$output" == *"api_host for gl.example.com is 'api.gl.example.com'"* ]]
+}
+
+@test "stage_glab_config: warns for a two-space hand-written config too" {
+  glab_config_setup
+  printf 'hosts:\n  gl.example.com:\n    api_host: api.gl.example.com\n  gitlab.com:\n    api_host: gitlab.com\n' >"$GLAB_SRC/config.yml"
+  GLAB_SIDECAR_ACTIVE=1 GLAB_PROXY_HOST=gl.example.com
+  run stage_glab_config
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"api_host for gl.example.com is 'api.gl.example.com'"* ]]
+}
+
+@test "stage_glab_config: no warning when another host has a different api_host" {
+  glab_config_setup
+  printf 'hosts:\n    gitlab.com:\n        api_host: api.gitlab.com\n    gl.example.com:\n        api_host: gl.example.com\n' >"$GLAB_SRC/config.yml"
+  GLAB_SIDECAR_ACTIVE=1 GLAB_PROXY_HOST=gl.example.com
+  run stage_glab_config
+  [ "$status" -eq 0 ] && [ -z "$output" ]
 }
 
 # --- run_container / main ---

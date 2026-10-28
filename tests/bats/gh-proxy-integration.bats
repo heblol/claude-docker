@@ -2,10 +2,11 @@
 # Unit tests for tests/integration/gh-proxy-integration.sh's helpers; docker, script and
 # timeout are stubbed, so no daemon is needed.
 #
-# Not unit-tested here: phase1_main_session, phase2_concurrent, phase3_flags
-# and phase5_glab_api. They are the harness's end-to-end scenarios — real run.sh,
-# real sidecar, real containers — and stubbing docker away leaves nothing of
-# them to test. They are exercised by running the harness itself (#10).
+# Not unit-tested here: phase1_main_session, phase2_concurrent, phase3_flags,
+# phase5_glab_api and phase6_glab_api_fail_closed. They are the harness's
+# end-to-end scenarios — real run.sh, real sidecar, real containers — and
+# stubbing docker away leaves nothing of them to test. They are exercised by
+# running the harness itself (#10).
 
 SUT="${BATS_TEST_DIRNAME}/../integration/gh-proxy-integration.sh"
 

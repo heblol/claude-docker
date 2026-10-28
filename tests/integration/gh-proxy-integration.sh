@@ -310,6 +310,14 @@ run_wrapped() {
   return "$rc"
 }
 
+# True when run.sh's own output in a run_wrapped log contains $2. util-linux
+# script(1) writes a "Script started on ... [COMMAND=...]" header (and a
+# "Script done" footer) holding the harness's own command line, fake
+# credentials included, so those lines are left out.
+log_output_has() {
+  grep -v -e '^Script started on ' -e '^Script done on ' "$1" 2>/dev/null | grep -qF -- "$2"
+}
+
 # sha256 of a file, portable: sha256sum (Linux) vs shasum -a 256 (macOS).
 hash_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -439,6 +447,7 @@ gen_assert_script() {
     printf 'MODE=%q\n' "$mode"
     printf 'FAKE_TOKEN=%q\n' "$fake"
     printf 'FAKE_API=%q\n' "$FAKE_API"
+    printf 'FAKE_GH=%q\n' "$FAKE1"
     printf 'POLICY_EXT=%q\n' "$policy_ext"
     printf 'RESULTS=%q\n' "$results"
     printf 'DONE_MARKER=%q\n' "$done_marker"
@@ -622,16 +631,19 @@ run_glabapi_checks() {
   [ "${GITLAB_TOKEN:-}" = "claude-docker-proxy" ] \
     && pass "glab: placeholder GITLAB_TOKEN in agent env" \
     || fail "glab: GITLAB_TOKEN expected 'claude-docker-proxy', got '${GITLAB_TOKEN:-<unset>}'"
+  [ "${GH_TOKEN:-}" = "claude-docker-proxy" ] \
+    && pass "gh: placeholder GH_TOKEN in agent env" \
+    || fail "gh: GH_TOKEN expected 'claude-docker-proxy', got '${GH_TOKEN:-<unset>}'"
   [ "${ANTHROPIC_API_KEY:-}" = "claude-docker-proxy" ] \
     && pass "api: placeholder ANTHROPIC_API_KEY in agent env" \
     || fail "api: ANTHROPIC_API_KEY expected 'claude-docker-proxy', got '${ANTHROPIC_API_KEY:-<unset>}'"
   [ "${ANTHROPIC_BASE_URL:-}" = "http://claude-docker-api-proxy:8080" ] \
     && pass "api: ANTHROPIC_BASE_URL points at the sidecar" \
     || fail "api: ANTHROPIC_BASE_URL is '${ANTHROPIC_BASE_URL:-<unset>}'"
-  if grep -aq -e "$FAKE_TOKEN" -e "$FAKE_API" /proc/1/environ 2>/dev/null; then
-    fail "glab/api: a fake host credential is in /proc/1/environ"
+  if grep -aq -e "$FAKE_TOKEN" -e "$FAKE_API" -e "$FAKE_GH" /proc/1/environ 2>/dev/null; then
+    fail "gh/glab/api: a fake host credential is in /proc/1/environ"
   else
-    pass "glab/api: neither fake host credential is in /proc/1/environ"
+    pass "gh/glab/api: no fake host credential is in /proc/1/environ"
   fi
 
   local i=0 out=""
@@ -652,6 +664,12 @@ run_glabapi_checks() {
   else
     skip "glab: glab not on PATH in this image"
   fi
+  # The GitLab loop above waited for the mock, so gh can go straight through.
+  out=$(curl -sS --max-time 10 https://api.github.com/user 2>/dev/null)
+  case "$out" in
+    *"\"authorization\":\"Bearer $FAKE_GH\""*) pass "gh: api.github.com got the injected Bearer header from the same sidecar" ;;
+    *) fail "gh: unexpected echo for api.github.com/user: ${out:-<no response>}" ;;
+  esac
   out=$(curl -sS --max-time 10 'https://gitlab.example.test/g/p.git/info/refs?service=git-upload-pack' 2>/dev/null)
   case "$out" in
     *'"authorization":"Basic '*) pass "glab: git smart-HTTP path got the injected Basic header" ;;
@@ -668,6 +686,8 @@ run_glabapi_checks() {
     *) fail "glab: LFS batch echo: $out" ;;
   esac
   local code body
+  # A plain mktemp: this runs inside the agent container, where the host's
+  # $SCRATCH does not exist, and the container is discarded afterwards.
   body=$(mktemp)
   code=$(curl -sS --max-time 10 -o "$body" -w '%{http_code}' -X DELETE 'https://gitlab.example.test/api/v4/projects/g%2Fp' 2>/dev/null)
   if [ "$code" = 403 ] && grep -q "claude-docker glab-proxy policy" "$body"; then
@@ -719,6 +739,18 @@ case "$MODE" in
       pass "4.6 --gh with no host token: GH_TOKEN is unset/empty in the agent container"
     else
       fail "4.6 --gh with no host token: GH_TOKEN unexpectedly set to '${GH_TOKEN}'"
+    fi
+    ;;
+  glab-notoken)
+    if [ -z "${GITLAB_TOKEN:-}" ]; then
+      pass "2.7 --glab with no token: GITLAB_TOKEN is unset/empty in the agent container"
+    else
+      fail "2.7 --glab with no token: GITLAB_TOKEN unexpectedly set to '${GITLAB_TOKEN}'"
+    fi
+    if grep -q 'gitlab.example.test' /etc/hosts 2>/dev/null; then
+      fail "2.7 --glab with no token: /etc/hosts redirects gitlab.example.test (expected normal resolution)"
+    else
+      pass "2.7 --glab with no token: gitlab.example.test is not redirected in /etc/hosts"
     fi
     ;;
   badimage-sentinel)
@@ -1173,12 +1205,13 @@ phase3_flags() {
 }
 
 # ===========================================================================
-# Phase 5: --glab and --api through the same sidecar (glab-auth-proxy,
-# api-auth-proxy). The mock answers for GitLab and the model gateway too.
+# Phase 5 (task 4.1): --gh, --glab and --api through the same sidecar
+# (gh-, glab- and api-auth-proxy). The mock answers for GitHub, GitLab and
+# the model gateway.
 # ===========================================================================
 phase5_glab_api() {
   echo
-  echo "=== Phase 5: --glab + --api through one sidecar ==="
+  echo "=== Phase 5: --gh + --glab + --api through one sidecar ==="
 
   local ws="$SCRATCH/ghtest-glabapi" log="$SCRATCH/run5.log" home="$SCRATCH/home5"
   local pre net sidecar="" pid rc=0
@@ -1188,6 +1221,8 @@ phase5_glab_api() {
   # A HOME of its own, so host glab config can't change which host is proxied.
   run_wrapped "$log" env \
     HOME="$home" \
+    GH_TOKEN="$FAKE1" \
+    CLAUDE_DOCKER_GH_UPSTREAM="http://ghmock:8080" \
     GITLAB_TOKEN="$FAKE_GLAB" \
     GITLAB_HOST=gitlab.example.test \
     ANTHROPIC_API_KEY="$FAKE_API" \
@@ -1196,7 +1231,7 @@ phase5_glab_api() {
     CLAUDE_DOCKER_IMAGE="$TARGET_IMAGE" \
     CLAUDE_DOCKER_GLAB_UPSTREAM="http://ghmock:8080" \
     CLAUDE_DOCKER_TEST_ENTRY="exec bash /workspaces/ghtest-glabapi/assert.sh" \
-    bash "$RUN_SH" --ephemeral --glab --api "$ws" &
+    bash "$RUN_SH" --ephemeral --gh --glab --api "$ws" &
   pid=$!
   BG_PIDS+=("$pid")
 
@@ -1206,7 +1241,7 @@ phase5_glab_api() {
       || record_fail "phase 5: could not attach mock to $net"
     sidecar="claude-auth-proxy-${net#claude-auth-}"
     if wait_for_container_running "$sidecar" 15; then
-      record_pass "phase 5: one sidecar '$sidecar' serves --glab and --api"
+      record_pass "phase 5: one sidecar '$sidecar' serves --gh, --glab and --api"
     else
       record_fail "phase 5: sidecar '$sidecar' never ran"
       sidecar=""
@@ -1226,9 +1261,9 @@ phase5_glab_api() {
   fi
   wait "$pid" || rc=$?
   record_rc_zero "$rc" "phase 5: run.sh" "$log"
-  ingest_results_file "$ws/results.txt" "glab+api-session"
+  ingest_results_file "$ws/results.txt" "gh+glab+api-session"
   if [ -f "$SCRATCH/sidecar5.log" ]; then
-    if grep -qF -e "$FAKE_GLAB" -e "$FAKE_API" "$SCRATCH/sidecar5.log"; then
+    if grep -qF -e "$FAKE_GLAB" -e "$FAKE_API" -e "$FAKE1" "$SCRATCH/sidecar5.log"; then
       record_fail "phase 5: sidecar audit log leaks a fake credential"
     else
       record_pass "phase 5: sidecar audit log contains neither fake credential"
@@ -1237,6 +1272,11 @@ phase5_glab_api() {
       record_pass "phase 5: audit log names the GitLab host"
     else
       record_fail "phase 5: audit log has no gitlab.example.test entry"
+    fi
+    if grep -q '"host":"api.github.com"' "$SCRATCH/sidecar5.log"; then
+      record_pass "phase 5: the same audit log names api.github.com"
+    else
+      record_fail "phase 5: audit log has no api.github.com entry"
     fi
   fi
   # grep -c, not -q: under pipefail an early-exiting -q can SIGPIPE the first grep.
@@ -1250,6 +1290,118 @@ phase5_glab_api() {
     record_pass "phase 5: teardown left no claude-auth-* resources"
   else
     record_fail "phase 5: claude-auth-* leftovers: [$(new_claude_auth_leftovers)]"
+  fi
+}
+
+# ===========================================================================
+# Phase 6 (tasks 2.7, 3.6): --glab and --api fail closed, and --glab with no
+# token stays out of the way. Runs after phase 5 has fully torn down.
+# ===========================================================================
+phase6_glab_api_fail_closed() {
+  echo
+  echo "=== Phase 6: --glab / --api fail-closed and no-token (2.7, 3.6) ==="
+
+  local ws log home RC
+
+  # 2.7.a: an invalid CLAUDE_DOCKER_GLAB_POLICY stops the sidecar, so the
+  # agent never starts and the token reaches no container.
+  ws="$SCRATCH/ghtest-badpolicy" log="$SCRATCH/run6p.log" home="$SCRATCH/home6p"
+  mkdir -p "$ws" "$home"
+  gen_assert_script "$ws/assert.sh" badimage-sentinel "$FAKE_GLAB" ""
+  printf 'this is { not a caddy directive\n' > "$SCRATCH/bad-policy.caddy"
+  run_wrapped_wait "$log" env \
+    HOME="$home" \
+    GITLAB_TOKEN="$FAKE_GLAB" \
+    GITLAB_HOST=gitlab.example.test \
+    CLAUDE_DOCKER_GLAB_POLICY="$SCRATCH/bad-policy.caddy" \
+    CLAUDE_DOCKER_RUNTIME=docker \
+    CLAUDE_DOCKER_IMAGE="$TARGET_IMAGE" \
+    CLAUDE_DOCKER_TEST_ENTRY="exec bash /workspaces/ghtest-badpolicy/assert.sh" \
+    bash "$RUN_SH" --glab "$ws"
+  if [ "$RC" -ne 0 ]; then
+    record_pass "2.7 invalid CLAUDE_DOCKER_GLAB_POLICY exits non-zero ($RC)"
+  else
+    record_fail "2.7 invalid CLAUDE_DOCKER_GLAB_POLICY exited 0 (expected fatal error)"
+  fi
+  # run.sh relays the sidecar's own log lines, prefixed '  | ', after its abort message.
+  if grep -q 'sidecar exited during startup' "$log" 2>/dev/null && grep -q '^  | ' "$log" 2>/dev/null; then
+    record_pass "2.7 invalid policy: the output carries Caddy's own error"
+  else
+    record_fail "2.7 invalid policy: no relayed Caddy error in the output (see $log)"
+  fi
+  if [ -f "$ws/should-not-exist" ]; then
+    record_fail "2.7 agent container ran despite an invalid glab policy (fail-closed regression)"
+  else
+    record_pass "2.7 agent container never started with an invalid glab policy"
+  fi
+  if log_output_has "$log" "$FAKE_GLAB"; then
+    record_fail "2.7 invalid policy: the GitLab token appears in run.sh output"
+  else
+    record_pass "2.7 invalid policy: the GitLab token appears nowhere in run.sh output"
+  fi
+  if wait_for_absence_claude_auth 20; then
+    record_pass "2.7 invalid policy left no claude-auth-* resources behind"
+  else
+    record_fail "2.7 invalid policy left claude-auth-* resources: [$(new_claude_auth_leftovers)]"
+  fi
+
+  # 2.7.b: --glab with no token anywhere: no sidecar, no redirect, no token.
+  ws="$SCRATCH/ghtest-glabnotoken" log="$SCRATCH/run6n.log" home="$SCRATCH/home6n"
+  mkdir -p "$ws" "$home"
+  gen_assert_script "$ws/assert.sh" glab-notoken "" ""
+  run_wrapped_wait "$log" env -u GITLAB_TOKEN -u GITLAB_ACCESS_TOKEN -u OAUTH_TOKEN \
+    HOME="$home" \
+    GITLAB_HOST=gitlab.example.test \
+    GLAB_CONFIG_DIR="$home/glab-cli" \
+    CLAUDE_DOCKER_RUNTIME=docker \
+    CLAUDE_DOCKER_IMAGE="$TARGET_IMAGE" \
+    CLAUDE_DOCKER_TEST_ENTRY="exec bash /workspaces/ghtest-glabnotoken/assert.sh" \
+    bash "$RUN_SH" --glab "$ws"
+  record_rc_zero "$RC" "2.7 --glab with no token"
+  ingest_results_file "$ws/results.txt" "glab-no-token"
+  if no_new_claude_auth_resources; then
+    record_pass "2.7 --glab with no token started no sidecar or network"
+  else
+    record_fail "2.7 --glab with no token left claude-auth-* resources behind"
+  fi
+
+  # 3.6: --api with an unresolvable proxy image fails closed and names --api-direct.
+  ws="$SCRATCH/ghtest-apibadimage" log="$SCRATCH/run6i.log" home="$SCRATCH/home6i"
+  mkdir -p "$ws" "$home"
+  gen_assert_script "$ws/assert.sh" badimage-sentinel "" ""
+  run_wrapped_wait "$log" env \
+    HOME="$home" \
+    ANTHROPIC_API_KEY="$FAKE_API" \
+    ANTHROPIC_BASE_URL="http://ghmock:8080/gw" \
+    CLAUDE_DOCKER_RUNTIME=docker \
+    CLAUDE_DOCKER_IMAGE="$TARGET_IMAGE" \
+    CLAUDE_DOCKER_PROXY_IMAGE="localhost/does-not-exist:0" \
+    CLAUDE_DOCKER_TEST_ENTRY="exec bash /workspaces/ghtest-apibadimage/assert.sh" \
+    bash "$RUN_SH" --api "$ws"
+  if [ "$RC" -ne 0 ]; then
+    record_pass "3.6 --api with a bad proxy image exits non-zero ($RC)"
+  else
+    record_fail "3.6 --api with a bad proxy image exited 0 (expected fatal error)"
+  fi
+  if grep -qF -- '--api-direct' "$log" 2>/dev/null; then
+    record_pass "3.6 --api failure message names --api-direct"
+  else
+    record_fail "3.6 --api failure message does not name --api-direct (see $log)"
+  fi
+  if [ -f "$ws/should-not-exist" ]; then
+    record_fail "3.6 agent container ran despite the sidecar failing to start (fail-closed regression)"
+  else
+    record_pass "3.6 agent container never started when the --api sidecar failed"
+  fi
+  if log_output_has "$log" "$FAKE_API"; then
+    record_fail "3.6 bad image: the API key appears in run.sh output"
+  else
+    record_pass "3.6 bad image: the API key appears nowhere in run.sh output"
+  fi
+  if wait_for_absence_claude_auth 20; then
+    record_pass "3.6 bad image left no claude-auth-* resources behind"
+  else
+    record_fail "3.6 bad image left claude-auth-* resources: [$(new_claude_auth_leftovers)]"
   fi
 }
 
@@ -1278,6 +1430,7 @@ main() {
   phase2_concurrent
   phase3_flags
   phase5_glab_api
+  phase6_glab_api_fail_closed
   summary
 }
 
