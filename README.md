@@ -126,7 +126,7 @@ claude-docker ~/repo -- --continue              # resume the most recent session
 
 Inside a running session, `/resume` opens the same picker. In the picker, `Ctrl+A` lists sessions from every workspace you've used, not just the current one.
 
-Sessions are listed per container path, `/workspaces/<basename>` of the first workspace. A session started from `~/repo` shows up without `Ctrl+A` only when you launch with a first workspace named `repo` again; two host directories with the same basename share one list.
+Sessions are listed per container path, `/workspaces/<basename>` of the first workspace. A session started from `~/repo` shows up without `Ctrl+A` only when you launch with a first workspace named `repo` again; two host directories with the same basename share one list. A workspace passed as a symlink is mounted, and named, as the directory it points to; `claude-docker` says so when it starts.
 
 Conversation history persists in the shared `claude-code-home` volume. Under `--ephemeral` it doesn't, so there is nothing to resume.
 

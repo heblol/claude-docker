@@ -4,7 +4,7 @@
 
 ## Host config parity
 
-On every run, these items are dereferenced (symlinks resolved) and bind-mounted read-only into the container at the equivalent `/root/.claude/` path:
+On every run, these items are copied at start and the copies are mounted read-only into the container at the equivalent `/root/.claude/` path:
 
 | Item                              | Purpose                       |
 | --------------------------------- | ----------------------------- |
@@ -14,6 +14,10 @@ On every run, these items are dereferenced (symlinks resolved) and bind-mounted 
 | `~/.claude/themes/`               | custom themes                 |
 | `~/.claude/CLAUDE.md`             | global preferences (`gprefs`) |
 | `~/.claude/statusline-command.sh` | statusline renderer           |
+
+**Symlinks.** Each item, and each entry directly inside `agents/`, `skills/`, `commands/` or `themes/`, may be one symlink you made, e.g. `skills/foo -> ~/repos/shared-config/skills/foo`. Its target must not be another symlink. Inside what those reach, a symlink is kept only when it is relative and stays inside the copied entry (`lib/run.sh`, `../SKILL.md`). Anything else is skipped with a `claude-docker: skipping …` warning: a link chain, an absolute link, a link that climbs out of the entry. The reason: the link targets often live in a repo you also open as a workspace, and a session can write there, so following its links could copy another host file into the container.
+
+Because these are copies, edits you make on the host during a session apply from the next start.
 
 The mounts are read-only. For `themes/` that means you can select a custom theme in the container, but saving one from the `/theme` editor fails with "theme save failed": edit themes on the host and they apply on the next start.
 
@@ -62,7 +66,7 @@ Files created inside the container appear on the host owned by the user who laun
 
 Git worktrees embed the path between the worktree and its repo's `.git/` in two link files. By default those paths are absolute, so a worktree created on the host breaks inside the container (and vice versa) because the same files sit at different absolute paths in each environment.
 
-**No host config change needed.** For every workspace whose `.git/config` is a regular file (i.e. the main repo, not a worktree pointer), `claude-docker` overlays a container-only copy of `.git/config` that declares `extensions.relativeWorktrees = true` and `worktree.useRelativePaths = true`. The host's on-disk `.git/config` is never touched. Worktrees created inside the container therefore get relative paths, and those link files are then portable to the host without any opt-in. A `.git` or `.git/config` that is a symlink is never followed: that workspace gets no overlay, because the workspace is container-writable and following the link could copy a host file from outside it into the container.
+**No host config change needed.** For every workspace whose `.git/config` is a regular file (i.e. the main repo, not a worktree pointer), `claude-docker` overlays a container-only copy of `.git/config` that declares `extensions.relativeWorktrees = true` and `worktree.useRelativePaths = true`. The host's on-disk `.git/config` is never touched. Worktrees created inside the container therefore get relative paths, and those link files are then portable to the host without any opt-in. A `.git` or `.git/config` that is a symlink is never followed, including one swapped in while `claude-docker` starts: that workspace gets no overlay, because the workspace is container-writable and following the link could copy a host file from outside it into the container.
 
 This asymmetry is deliberate: the extension flag — when written into the host's `.git/config` — blinds tools that bundle an older libgit2 (notably `gitstatusd`, which powers the Powerlevel10k git prompt), because they refuse to open a v1 repo declaring an extension they don't know. Keeping the flag container-only sidesteps that.
 
