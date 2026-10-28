@@ -338,6 +338,7 @@ stub_checks() {
   check_identity() { pass c2; }
   check_security() { pass c3; }
   check_path_order() { pass c4; }
+  check_git_trust() { pass c4b; }
   check_workspace_write() { pass c5; }
   check_credentials() { pass c6; }
   check_aws_state_masking() { pass c7; }
@@ -350,7 +351,7 @@ stub_checks() {
   check_settings() { fail settings; }
   run main
   [ "$status" -eq 1 ]
-  [[ "$output" == *"Results: 9 passed, 1 failed"* ]]
+  [[ "$output" == *"Results: 10 passed, 1 failed"* ]]
   [[ "$output" == *"RESULT: FAIL" ]]
   [[ "$output" != *"RESULT: PASS"* ]]
 }
