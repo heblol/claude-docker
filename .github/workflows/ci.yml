@@ -188,11 +188,11 @@ jobs:
       - name: API egress lock smoke (run.sh end-to-end)
         # The --egress-lock lives entirely in run.sh (internal network, squid
         # sidecar, proxy env, teardown). Unlike the cells above, these drive
-        # run.sh itself with the real docker, so the sidecars and their
-        # teardown are exercised as well. They prove that the endpoint and other hosts are
-        # reachable, a model provider is refused, and, the load-bearing
-        # part, that a proxy-unaware client has no route out at all. Same job
-        # as the build for the same reason as the step above.
+        # run.sh itself with the real docker, so the sidecars and their teardown
+        # are exercised as well. They prove that the endpoint and other hosts
+        # are reachable, a model provider is refused, and, the load-bearing
+        # part, that a proxy-unaware client has no route out at all. Same job as
+        # the build for the same reason as the step above.
         #   1. plain  — endpoint checks, provider denies, DNS, saved log, teardown
         #   2. --gh   — composition: GitHub traffic via squid → gh sidecar
         #   3. --endpoint-port — an endpoint on a non-80/443 port is allowed,

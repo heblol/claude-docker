@@ -1488,7 +1488,7 @@ USER squid" ]
   STUB_FAIL="network:connect"
   run start_egress_sidecar
   [ "$status" -eq 1 ]
-  [[ "$output" == *"failed to start the --egress-lock proxy"* ]]
+  [[ "$output" == *"failed to join the --egress-lock proxy to network "* ]]
   run ! grep -q "^docker logs" "$CALLS"
 }
 

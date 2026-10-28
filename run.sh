@@ -126,11 +126,10 @@ Wrapper flags:
                       --internal network and goes out only via a squid sidecar
                       (HTTPS via CONNECT, no TLS interception) that refuses
                       *.anthropic.com / *.claude.ai / *.claude.com and logs
-                      every connection it carries. Other hosts stay
-                      reachable. The log
-                      is saved on the host when the session ends. Claude
-                      Code's managed settings pin the endpoint, so a project's
-                      .claude/settings.json can't move it.
+                      every connection it carries. Other hosts stay reachable.
+                      The log is saved on the host when the session ends.
+                      Claude Code's managed settings pin the endpoint, so a
+                      project's .claude/settings.json can't move it.
   --iterm             Wrap claude in tmux -CC (iTerm2 control mode → native
                       panes). Equivalent to CLAUDE_DOCKER_TMUX=cc.
   --tmux              Wrap claude in plain tmux (works in any terminal).
@@ -390,14 +389,15 @@ validate_opts() {
   # except requests to the auth-proxy sidecar's fixed upstreams that skip the
   # proxy env (see api-egress-policy), and model traffic may reach only the
   # configured endpoint. Its own opt-in, not part of --api, because most
-  # gateway users don't need the sidecar or a log of every connection; it needs --api or
-  # --api-direct for the endpoint and token forwarding. Under --api the model
-  # traffic goes agent → squid → auth-proxy sidecar → endpoint, so the
-  # endpoint below is the sidecar's upstream. Everything else stays open: only model traffic has to stay in the
-  # EU, and an allowlist of every git/npm/pypi host would be a list each user
-  # maintains. The endpoint must be set: unset, Claude Code talks to
-  # api.anthropic.com, which the lock refuses. Checked before runtime detection,
-  # so a bad value aborts with nothing to undo.
+  # gateway users don't need the sidecar or a log of every connection; it needs
+  # --api or --api-direct for the endpoint and token forwarding. Under --api
+  # the model traffic goes agent → squid → auth-proxy sidecar → endpoint, so
+  # the endpoint below is the sidecar's upstream. Everything else stays open:
+  # only model traffic has to stay in the EU, and an allowlist of every
+  # git/npm/pypi host would be a list each user maintains. The endpoint must be
+  # set: unset, Claude Code talks to api.anthropic.com, which the lock refuses.
+  # Checked before runtime detection, so a bad value aborts with nothing to
+  # undo.
   if [ "$WITH_EGRESS_LOCK" = "1" ] && [ "$WITH_API" != "1" ] && [ "$WITH_API_DIRECT" != "1" ]; then
     echo "claude-docker: --egress-lock needs --api or --api-direct (it locks model traffic to the --api endpoint)" >&2
     exit 1
@@ -1885,7 +1885,7 @@ start_egress_sidecar() {
     fi
     egress_started="$started"
     if ! "$RUNTIME" network connect "$EGRESS_NETWORK" "$EGRESS_SIDECAR" >/dev/null; then
-      echo "claude-docker: failed to start the --egress-lock proxy ($EGRESS_IMAGE) — aborting (the agent container was never started)" >&2
+      echo "claude-docker: failed to join the --egress-lock proxy to network $EGRESS_NETWORK — aborting (the agent container was never started)" >&2
       exit 1
     fi
 
