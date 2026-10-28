@@ -45,7 +45,7 @@ set_run_env() {
     run_env=(ANTHROPIC_BASE_URL=http://claude-docker-api-proxy:9002
       http_proxy=http://127.0.0.1:9001 https_proxy=http://127.0.0.1:9001
       HTTP_PROXY=http://127.0.0.1:9001 HTTPS_PROXY=http://127.0.0.1:9001
-      no_proxy=localhost,127.0.0.1,::1 NO_PROXY=localhost,127.0.0.1,::1)
+      "no_proxy=localhost,127.0.0.1,::1" "NO_PROXY=localhost,127.0.0.1,::1")
   else
     run_env=(ANTHROPIC_BASE_URL=http://127.0.0.1:9001)
   fi
