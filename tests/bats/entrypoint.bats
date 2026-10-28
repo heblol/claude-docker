@@ -192,3 +192,89 @@ setup() {
   [ "$status" -eq 9 ]
   [[ "$output" != *runuser* ]]
 }
+
+# --- approve_api_key (--egress-lock) ---------------------------------------
+
+API_KEY="sk-ant-test-0123456789abcdefghijKLMNOPQRSTUV"
+API_KEY_ID="${API_KEY: -20}"
+
+# Runs approve_api_key with the lock on and $1 (default $API_KEY) as the key.
+approve() {
+  CLAUDE_DOCKER_EGRESS_LOCK=1 ANTHROPIC_API_KEY="${1-$API_KEY}" run approve_api_key
+}
+
+@test "approve_api_key: a fresh volume gets the key approved, owner-only" {
+  approve
+  [ "$status" -eq 0 ]
+  [ "$(jq -c . "$ROOT_HOME/.claude.json")" = "{\"customApiKeyResponses\":{\"rejected\":[],\"approved\":[\"$API_KEY_ID\"]}}" ]
+  [ "$(stat -c %a "$ROOT_HOME/.claude.json")" = 600 ]
+  [ "$(ls -A "$ROOT_HOME")" = .claude.json ]
+}
+
+@test "approve_api_key: an existing config is kept and the key not duplicated" {
+  printf '%s' '{"hasCompletedOnboarding":true,"customApiKeyResponses":{"approved":["other"],"rejected":["x"]}}' \
+    > "$ROOT_HOME/.claude.json"
+  approve
+  approve
+  [ "$status" -eq 0 ]
+  [ "$(jq -c . "$ROOT_HOME/.claude.json")" = "{\"hasCompletedOnboarding\":true,\"customApiKeyResponses\":{\"approved\":[\"other\",\"$API_KEY_ID\"],\"rejected\":[\"x\"]}}" ]
+  [ "$(ls -A "$ROOT_HOME")" = .claude.json ]
+}
+
+@test "approve_api_key: the key is trimmed, as Claude Code does" {
+  approve "  $API_KEY"$'\n'
+  [ "$(jq -c .customApiKeyResponses.approved "$ROOT_HOME/.claude.json")" = "[\"$API_KEY_ID\"]" ]
+}
+
+@test "approve_api_key: a key shorter than 20 characters is approved whole" {
+  # Under --api the agent sees the sidecar's 19-character placeholder.
+  approve claude-docker-proxy
+  [ "$(jq -c .customApiKeyResponses.approved "$ROOT_HOME/.claude.json")" = '["claude-docker-proxy"]' ]
+}
+
+@test "approve_api_key: no lock or no key touches nothing" {
+  CLAUDE_DOCKER_EGRESS_LOCK="" ANTHROPIC_API_KEY="$API_KEY" run approve_api_key
+  [ "$status" -eq 0 ]
+  approve ""
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$ROOT_HOME/.claude.json" ]
+}
+
+@test "approve_api_key: invalid JSON is left alone with a WARN" {
+  printf '{not json' > "$ROOT_HOME/.claude.json"
+  approve
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$ROOT_HOME/.claude.json is not valid JSON; not approving ANTHROPIC_API_KEY"* ]]
+  [ "$(cat "$ROOT_HOME/.claude.json")" = '{not json' ]
+  [ "$(ls -A "$ROOT_HOME")" = .claude.json ]
+}
+
+@test "approve_api_key: a symlinked .claude.json is not followed" {
+  local other="$BATS_TEST_TMPDIR/other" dest
+  mkdir -p "$other"
+  printf '{"secret":1}' > "$other/secret.json"
+  for dest in "$other/secret.json" "$other/missing.json"; do
+    rm -f "$ROOT_HOME/.claude.json"
+    ln -s "$dest" "$ROOT_HOME/.claude.json"
+    approve
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$ROOT_HOME/.claude.json is not a regular file; not approving ANTHROPIC_API_KEY"* ]]
+    [ -L "$ROOT_HOME/.claude.json" ]
+  done
+  [ "$(cat "$other/secret.json")" = '{"secret":1}' ]
+  [ ! -e "$other/missing.json" ]
+  [ "$(ls -A "$ROOT_HOME")" = .claude.json ]
+}
+
+@test "approve_api_key: chowns ROOT_HOME back to root before writing" {
+  approve
+  [[ "$output" == *"chown root $ROOT_HOME"* ]]
+}
+
+@test "approve_api_key: a failed chown stops before writing" {
+  chown() { return 7; }
+  approve
+  [ "$status" -eq 7 ]
+  [ ! -e "$ROOT_HOME/.claude.json" ]
+}
