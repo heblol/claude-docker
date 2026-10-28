@@ -64,6 +64,14 @@ CVE-2026-78669 exp:2026-11-04
 # weekly refresh picks it up. At expiry, check the undici bundled by both pins
 # and drop this if both are fixed.
 CVE-2026-109869 exp:2026-11-04
+# undici CVE-2026-109383 (certificate validation bypass via TLS options dropped
+# in Agent), flagged from 2026-10-28. Fixed in 6.29.1, and it hits the
+# same npm and pnpm copies of 6.29.0, so CVE-2026-109869's expiry and reason
+# apply.
+CVE-2026-109383 exp:2026-11-04
+# undici CVE-2026-87018 (DoS via TLS renegotiation with a mismatched
+# certificate). Same fix, copies, expiry and reason as CVE-2026-109383.
+CVE-2026-87018 exp:2026-11-04
 # Scope note: trivy ignores are per-CVE-ID and image-wide, unlike the path- and
 # version-scoped .grype.yaml rule for the same two CVEs. That is fine while
 # /opt/az holds the image's only cryptography 48.x copy (pins/az-requirements.txt);
