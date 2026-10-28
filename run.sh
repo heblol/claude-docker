@@ -637,7 +637,8 @@ build_env_args() {
 
 discover_tokens() {
   local _ws0 _glab_cfg _glab_remote _glab_default _glab_tried _glab_host _glab_from _glab_discovered=0
-  local _glab_origin _glab_unbound
+  local _glab_origin _glab_unbound _glab_flag=--glab
+  [ "$WITH_GLAB_DIRECT" = "1" ] && _glab_flag=--glab-direct
   # GitHub token discovery — shared, unchanged, by --gh and --gh-direct: host
   # env (GH_TOKEN/GITHUB_TOKEN) wins; else fall back to the gh CLI's active
   # token so users authenticated via `gh auth login` don't have to export
@@ -800,9 +801,9 @@ discover_tokens() {
         ENV_ARGS+=("-e" "GITLAB_HOST")
       fi
     elif command -v glab >/dev/null 2>&1; then
-      echo "claude-docker: --glab: no GitLab token found for ${_glab_tried:-any host}; set GITLAB_HOST=<host> (after host 'glab auth login') or export GITLAB_TOKEN" >&2
+      echo "claude-docker: $_glab_flag: no GitLab token found for ${_glab_tried:-any host}; set GITLAB_HOST=<host> (after host 'glab auth login') or export GITLAB_TOKEN" >&2
     else
-      echo "claude-docker: --glab: glab not on host PATH, no GitLab token to forward; export GITLAB_TOKEN" >&2
+      echo "claude-docker: $_glab_flag: glab not on host PATH, no GitLab token to forward; export GITLAB_TOKEN" >&2
     fi
   fi
 }
@@ -1072,8 +1073,8 @@ CADDY
 # project/group deletion and the REST calls that grant access that outlives
 # the session: tokens, SSH/GPG/deploy keys, runner, trigger and cluster-agent
 # tokens, project/group members (added, imported or approved), invitations,
-# LDAP/SAML group links, shares, transfers, webhooks, integrations, push
-# mirrors, pipeline schedules and access-request approvals, plus the admin
+# LDAP/SAML group links, shares, transfers, webhooks, integrations, push and
+# pull mirrors, pipeline schedules and access-request approvals, plus the admin
 # calls that create or edit users and OAuth applications or change instance
 # settings. Adding an email is blocked too: a verified secondary address can
 # receive a password reset, which hands over the whole account. A PUT on a bare project or group
@@ -1140,9 +1141,9 @@ stage_glab_proxy_site() {
 		respond @glab_proxy_settings "claude-docker glab-proxy policy: changing a project's or group's settings is blocked by default, since visibility and access settings can open access that outlives the session. Bypass the proxy with --glab-direct to change them." 403
 		@glab_proxy_mint {
 			method POST PUT
-			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners|emails)|users/+[^/?]+/+(keys|gpg_keys|emails)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys|(projects|groups)/+[^/?]+/+(share|transfer|hooks(/+[^/?]+)?|access_requests/+[^/?]+/+approve)|projects/+[^/?]+/+remote_mirrors(/+[^/?]+)?|hooks|projects/+[^/?]+/+import_project_members/+[^/?]+|(projects|groups)/+[^/?]+/+members/+[^/?]+/+approve|groups/+[^/?]+/+(ldap|saml)_group_links(/+[^/?]+)?|(projects|groups)/+[^/?]+/+(integrations|services)(/+[^/?]+)?|projects/+[^/?]+/+pipeline_schedules(/+[^/?]+(/+take_ownership)?)?|users(/+[^/?]+)?|applications|application/+settings)(\.json)?/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners|emails)|users/+[^/?]+/+(keys|gpg_keys|emails)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys|(projects|groups)/+[^/?]+/+(share|transfer|hooks(/+[^/?]+)?|access_requests/+[^/?]+/+approve)|projects/+[^/?]+/+remote_mirrors(/+[^/?]+)?|projects/+[^/?]+/+mirror/+pull|hooks|projects/+[^/?]+/+import_project_members/+[^/?]+|(projects|groups)/+[^/?]+/+members/+[^/?]+/+approve|groups/+[^/?]+/+(ldap|saml)_group_links(/+[^/?]+)?|(projects|groups)/+[^/?]+/+(integrations|services)(/+[^/?]+)?|projects/+[^/?]+/+pipeline_schedules(/+[^/?]+(/+take_ownership)?)?|users(/+[^/?]+)?|applications|application/+settings)(\.json)?/*(\?.*)?$
 		}
-		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding keys, emails, members, group links, shares, webhooks, integrations or push mirrors, approving access requests or members, pipeline schedules, transfers, and the admin calls that create users, OAuth applications or change instance settings are blocked by default, since they grant access or a data feed that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding keys, emails, members, group links, shares, webhooks, integrations, push or pull mirrors, approving access requests or members, pipeline schedules, transfers, and the admin calls that create users, OAuth applications or change instance settings are blocked by default, since they grant access or a data feed that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		import /etc/caddy/glab-policy.caddy
 
 		reverse_proxy {$GLAB_PROXY_UPSTREAM}

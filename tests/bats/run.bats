@@ -629,6 +629,15 @@ TABLE
   [[ "$output" == *"--glab: no GitLab token found for gitlab.example.com"* ]]
 }
 
+@test "discover_tokens: --glab-direct with no token names --glab-direct" {
+  glab() { return 0; }
+  WITH_GLAB_DIRECT=1 GITLAB_HOST=gitlab.example.com
+  SEEN_PATHS=("$WS")
+  run discover_tokens
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--glab-direct: no GitLab token found for gitlab.example.com"* ]]
+}
+
 # --- build_git_config ---
 
 @test "build_git_config: proxied forges add no git config" {

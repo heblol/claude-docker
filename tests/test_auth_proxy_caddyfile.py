@@ -457,6 +457,8 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("POST", "/api/v4/hooks"),
             ("POST", "/api/v4/projects/123/remote_mirrors"),
             ("PUT", "/api/v4/projects/g%2Fp/remote_mirrors/3"),
+            ("PUT", "/api/v4/projects/123/mirror/pull"),
+            ("POST", "/api/v4/projects/123/mirror/pull"),
             ("PUT", "/api/v4/groups/42/access_requests/7/approve"),
             ("POST", "/api/v4/projects/123/import_project_members/77"),
             ("PUT", "/api/v4/groups/42/members/7/approve"),
