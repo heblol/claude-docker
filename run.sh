@@ -421,7 +421,9 @@ cat_nofollow() {
     done
     [ -f "./$rest" ] && [ ! -L "./$rest" ] || exit 1
     exec 9<"./$rest" || exit 1
-    id=$(file_id /dev/fd/9) && [ "$(link_id "./$rest")" = "$id" ] || exit 1
+    # Inode only: macOS reports /dev/fd/N on the fdesc device, not the file's
+    # (the directory checks above don't go through /dev/fd and keep dev:ino).
+    fd=$(file_id /dev/fd/9) && id=$(link_id "./$rest") && [ "${fd#*:}" = "${id#*:}" ] || exit 1
     cat <&9
   ) 2>/dev/null
 }

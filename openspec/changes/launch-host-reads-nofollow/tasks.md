@@ -21,4 +21,4 @@
 - [x] 4.1 BATS: one hop followed, chain refused, planted links skipped, swapped skill refused, CLAUDE.md/settings staged, `.git` link skipped, autocrlf validated, `link_stays_inside`, symlinked workspace
 - [x] 4.2 BATS race tests: `.git/config` and `.git` swapped for links mid-read never leak
 - [x] 4.3 Full BATS and unittest suites; shellcheck
-- [ ] 4.4 macOS: `stat -L -f '%d:%i' /dev/fd/9` reports the opened file (manual, no macOS CI)
+- [x] 4.4 macOS (maintainer's host, 2026-10-28): `stat -L -f '%d:%i' /dev/fd/9` reports the opened file's inode but the fdesc device, so the open-file check compares inode only
