@@ -8,11 +8,12 @@
 IMAGE="${CLAUDE_DOCKER_IMAGE:-claude-code:local}"
 
 # Auth-proxy sidecar image (Caddy), used by --gh / --glab when a host token is
-# found and by --api (see openspec/specs/gh-auth-proxy and friends). Digest-pinned and deliberately
-# excluded from update_pins.py: a Caddy upgrade can change Caddyfile
-# directive semantics — i.e. this security-critical config — so bumping it
-# is a reviewed change (changelog + config-compatibility check), not a
-# routine automated bump. run.sh cannot read pins/, so the pin lives here.
+# found and by --api (see openspec/specs/gh-auth-proxy and friends).
+# Digest-pinned and deliberately excluded from update_pins.py: a Caddy
+# upgrade can change Caddyfile directive semantics — i.e. this
+# security-critical config — so bumping it is a reviewed change (changelog +
+# config-compatibility check), not a routine automated bump. run.sh cannot
+# read pins/, so the pin lives here.
 PROXY_IMAGE="${CLAUDE_DOCKER_PROXY_IMAGE:-caddy:2.11.4@sha256:844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9}"
 
 # Keep this in sync with the flag-parsing case statement below — adding or
@@ -1070,12 +1071,14 @@ CADDY
 # to the client (actions.*.header.Authorization). The default policy blocks
 # project/group deletion and the REST calls that grant access that outlives
 # the session: tokens, SSH/GPG/deploy keys, runner, trigger and cluster-agent
-# tokens, project/group members, invitations, shares, transfers, webhooks,
-# push mirrors and access-request approvals. A PUT on a bare project or
-# group path (its settings, visibility included) is refused too: Caddy can't
-# read the body to tell a visibility change apart. Best effort: GraphQL is not filtered, and token scope is the real
-# limit. Both match the raw request URI: path_regexp sees the decoded path, so
-# a URL-encoded project path (group%2Fproject) would slip past it. A raw match
+# tokens, project/group members (added, imported or approved), invitations,
+# LDAP/SAML group links, shares, transfers, webhooks, integrations, push
+# mirrors and access-request approvals. A PUT on a bare project or group
+# path (its settings, visibility included) is refused too: Caddy can't read
+# the body to tell a visibility change apart. Best effort: GraphQL is not
+# filtered, and token scope is the real limit. Both match the raw request
+# URI: path_regexp sees the decoded path, so a URL-encoded project path
+# (group%2Fproject) would slip past it. A raw match
 # can be dodged by percent-encoding a letter (/api/v4/%70rojects/1), which
 # GitLab's router decodes, so a write (DELETE/POST/PUT, what the policy
 # checks) that escapes an unreserved character is refused; reads pass, since
@@ -1134,9 +1137,9 @@ stage_glab_proxy_site() {
 		respond @glab_proxy_settings "claude-docker glab-proxy policy: changing a project's or group's settings is blocked by default, since visibility and access settings can open access that outlives the session. Bypass the proxy with --glab-direct to change them." 403
 		@glab_proxy_mint {
 			method POST PUT
-			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys|(projects|groups)/+[^/?]+/+(share|transfer|hooks(/+[^/?]+)?|access_requests/+[^/?]+/+approve)|projects/+[^/?]+/+remote_mirrors(/+[^/?]+)?|hooks)(\.json)?/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token|(projects|groups)/+[^/?]+/+(members|invitations)(/+[^/?]+)?|projects/+[^/?]+/+cluster_agents/+[^/?]+/+tokens|deploy_keys|(projects|groups)/+[^/?]+/+(share|transfer|hooks(/+[^/?]+)?|access_requests/+[^/?]+/+approve)|projects/+[^/?]+/+remote_mirrors(/+[^/?]+)?|hooks|projects/+[^/?]+/+import_project_members/+[^/?]+|(projects|groups)/+[^/?]+/+members/+[^/?]+/+approve|groups/+[^/?]+/+(ldap|saml)_group_links(/+[^/?]+)?|(projects|groups)/+[^/?]+/+(integrations|services)(/+[^/?]+)?)(\.json)?/*(\?.*)?$
 		}
-		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding keys, members, shares, webhooks or push mirrors, approving access requests and transfers are blocked by default, since they grant access that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, adding keys, members, group links, shares, webhooks, integrations or push mirrors, approving access requests or members, and transfers are blocked by default, since they grant access or a data feed that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		import /etc/caddy/glab-policy.caddy
 
 		reverse_proxy {$GLAB_PROXY_UPSTREAM}
@@ -1572,11 +1575,17 @@ stage_glab_config() {
   MOUNT_ARGS+=("-v" "$(hostpath "$stage/glab-config.yml"):/root/.config/glab-cli/config.yml:ro")
   # glab sends API calls to the host's api_host, not the host itself. A
   # different api_host is not intercepted, so those calls would carry only the
-  # placeholder and fail 401.
+  # placeholder and fail 401. Host keys sit at the indent of the first line
+  # under hosts: (glab writes four spaces; hand-written configs often use two).
   if [ "$GLAB_SIDECAR_ACTIVE" = "1" ]; then
     api_host=$(awk -v h="$GLAB_PROXY_HOST" '
-      /^[^[:space:]]/ { in_hosts = ($0 ~ /^hosts:/); in_host = 0; next }
-      in_hosts && /^  [^[:space:]]/ { k = $1; sub(/:$/, "", k); gsub(/["'"'"']/, "", k); in_host = (k == h); next }
+      /^[[:space:]]*(#|$)/ { next }
+      /^[^[:space:]]/ { in_hosts = ($0 ~ /^hosts:/); in_host = 0; ind = ""; next }
+      in_hosts {
+        match($0, /^[[:space:]]+/); cur = substr($0, 1, RLENGTH)
+        if (ind == "") ind = cur
+        if (cur == ind) { k = $1; sub(/:$/, "", k); gsub(/["'"'"']/, "", k); in_host = (k == h); next }
+      }
       in_host && $1 == "api_host:" { v = $2; gsub(/["'"'"']/, "", v); print v; exit }
     ' "$GLAB_SRC/config.yml" 2>/dev/null) || true
     if [ -n "$api_host" ] && [ "$api_host" != "$GLAB_PROXY_HOST" ] && [ "$api_host" != "${GLAB_PROXY_HOST%%:*}" ] \
