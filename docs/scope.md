@@ -2,7 +2,7 @@
 
 [← Back to the README](../README.md)
 
-claude-docker runs Claude Code in a container, with credentials off unless you opt in. It doesn't:
+claude-docker runs Claude Code in a container, with credentials off unless you opt in. See [Vision and scope](vision-and-scope.md) for what it is for and its principles. It doesn't:
 
 - work without docker or podman,
 - run agents other than Claude Code,
