@@ -130,7 +130,7 @@ class _Recorder(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    do_GET = do_POST = do_DELETE = do_HEAD = _handle
+    do_GET = do_POST = do_PUT = do_DELETE = do_HEAD = _handle
 
     def log_message(self, *_):
         pass
