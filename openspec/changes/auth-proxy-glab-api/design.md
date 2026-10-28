@@ -83,7 +83,7 @@ The existing `stage_glab_config` sed gains one more expression under `--glab`, a
 
 ### 6. `--api`: rewrite the base URL instead of intercepting TLS
 
-Inside the agent container, `ANTHROPIC_BASE_URL=http://claude-docker-api-proxy:8080`. The sidecar's IP gets an `--add-host` entry for that name. The sidecar's `api.caddy` site is `http://:8080` (scoped by host matcher). It:
+Inside the agent container, `ANTHROPIC_BASE_URL=http://claude-docker-api-proxy:8080`. The sidecar's IP gets an `--add-host` entry for that name. The sidecar's `api.caddy` site is the named site `http://claude-docker-api-proxy:8080`. It:
 
 - applies `rewrite * {$API_PROXY_PREFIX}{uri}` to keep a gateway path prefix
 - sets `header_up Host {upstream_hostport}`; unlike gh, the client hostname is not the upstream's

@@ -33,10 +33,10 @@
 - [ ] 2.5 While proxied, blank every `*token:` value in the staged `config.yml` (`stage_glab_config`). Leave `--glab-direct` copies untouched. Verify with a unit test: a config with tokens for two hosts plus `oauth2_refresh_token` keeps every key, with all token values `""` and `use_keyring: false`. Also confirm by hand that glab with an OAuth-logged-in config plus a placeholder env token does not try a refresh.
   - _Status:_ Implemented and unit-tested in bats and `GlabProxied`. The manual OAuth-refresh check needs real credentials and is deferred to #227.
 - [x] 2.6 Warn at startup when the staged config's `api_host` for the proxied host differs from that host. Verify with a `tests/test_glab_token.py` case.
-- [ ] 2.7 Check fail-closed and no-token behaviour. Verify with integration cases:
+- [x] 2.7 Check fail-closed and no-token behaviour. Verify with integration cases:
   - an invalid `CLAUDE_DOCKER_GLAB_POLICY` exits non-zero with Caddy's error, and the token appears in neither container
   - with no token found, no GitLab site is staged and the host resolves normally
-  - _Status:_ Implemented; fail-closed and no-token paths are covered by bats and `GlabProxied`, and by harness phase 6 (invalid policy, no token).
+  - _Status:_ Done. Covered by bats and `GlabProxied`, and by harness phase 6 (invalid policy, no token), which passes in CI ([CI run 40775594176](https://github.com/schubergphilis/claude-docker/actions/runs/40775594176) at `191a019`).
 - [x] 2.8 Update the GitLab and proxy sections of `docs/auth.md`, the threat-model and compromised-session bullets in `docs/security.md`, `docs/usage.md` and the credential opt-in table in `docs/auth.md`. Document `--glab-direct`, `CLAUDE_DOCKER_GLAB_POLICY`, and the `api_host`, private-CA and OAuth-expiry limitations. Verify that `lychee` link checks pass and the docs reviewer finds no orphaned section.
 - [x] 2.9 Move the `glab auth git-credential` helper from `--glab` to `--glab-direct`, and skip a `CLAUDE_DOCKER_ADD_HOSTS` entry for the proxied GitLab host in the agent container while still passing it to the sidecar. Verify with `tests/bats/run.bats` cases for `build_git_config` and `build_host_args`.
 
@@ -45,9 +45,9 @@
 - [x] 3.1 Add the `--api-direct` flag: parsing, a conflict check against `--api`, an `api-direct` flags entry, and help text. Apply the existing credential-required check and `CLAUDE_DOCKER_API_CA` handling to both flags. Verify with `tests/test_api_optin.py`: `--api --api-direct` is rejected, and `--api-direct` without a credential exits 1.
 - [x] 3.2 Under `--api`, split the host `ANTHROPIC_BASE_URL` (default `https://api.anthropic.com`) into origin and path prefix. Stop forwarding the URL and both credentials. Set the agent's `ANTHROPIC_BASE_URL=http://claude-docker-api-proxy:8080` and `claude-docker-proxy` placeholders only for the credentials the host set non-empty, and add `--add-host claude-docker-api-proxy:<sidecar ip>`. Keep forwarding the remaining `ANTHROPIC_*` / `CLAUDE_CODE_*` variables by name. Verify with `tests/test_api_optin.py` cases on the agent env and on the argv of both containers (no credential values).
 - [x] 3.3 Write a constant `api.caddy`:
-  - `http://:8080` with a host matcher, `rewrite * {$API_PROXY_PREFIX}{uri}` and `header_up Host {upstream_hostport}`
-  - `reverse_proxy {$API_PROXY_UPSTREAM}`
-  - an import of the staged credential snippets (`header_up x-api-key {env.API_PROXY_KEY}` or `header_up -x-api-key`, and the same pair for `Authorization`)
+  - the named site `http://claude-docker-api-proxy:8080`, with `rewrite * {$API_PROXY_PREFIX}{uri}` inside a `route`
+  - `reverse_proxy {$API_PROXY_UPSTREAM}` with `header_up Host {upstream_hostport}` and an import of the staged `api-transport.caddy`
+  - an import of the staged credential snippet (`request_header x-api-key "{env.API_PROXY_KEY}"` or `request_header -x-api-key`, and the same pair for `Authorization`)
   - logs with request headers filtered out
 
   Verify with a unit test that the snippet and the four credential one-liners are constant, and that staging picks the right pair for each host combination.
@@ -58,14 +58,14 @@
   - an SSE response streams incrementally, with the first event received before the mock closes
   - the key is absent from the agent's `/proc/1/environ` and from the sidecar logs
   - _Status:_ Done. Prefix, Host, credential swap and strip, SSE and log redaction are verified against real Caddy (an HTTPS mock with a test CA included); harness phase 5 passes in CI ([CI run 40773480271](https://github.com/schubergphilis/claude-docker/actions/runs/40773480271) at `ff7dee4`).
-- [ ] 3.6 Check fail-closed: with the proxy image overridden to a missing tag, `--api` exits non-zero naming `--api-direct`, and no container holds the key. Verify with an integration case.
-  - _Status:_ Implemented; bats covers the start failure naming `--api-direct`, and harness phase 6 runs `--api` with a missing proxy image.
+- [x] 3.6 Check fail-closed: with the proxy image overridden to a missing tag, `--api` exits non-zero naming `--api-direct`, and no container holds the key. Verify with an integration case.
+  - _Status:_ Done. bats covers the start failure naming `--api-direct`; harness phase 6 runs `--api` with a missing proxy image and passes in CI ([CI run 40775594176](https://github.com/schubergphilis/claude-docker/actions/runs/40775594176) at `191a019`).
 - [x] 3.7 Update the `--api` section of `docs/auth.md` and the threat model in `docs/security.md`. Document `--api-direct`, the plain-HTTP session hop, the one-time API-key approval prompt, and that `ANTHROPIC_CUSTOM_HEADERS` stays visible. Verify that `lychee` passes and the documented `claude-docker --api` example works against the mock.
 
 ## 4. Integration checks
 
-- [ ] 4.1 Run `claude-docker --gh --glab --api` against all three mocks in one session. Verify: exactly one `claude-auth-proxy-<id>` container and one `claude-auth-<id>` network exist; `gh`, `glab` and Claude Code requests all appear in one `docker logs` stream; and both are gone after exit.
-  - _Status:_ Harness phase 5 runs `--gh --glab --api` in one session: one sidecar, gh, glab and api requests in one audit log, nothing left after exit.
+- [x] 4.1 Run `claude-docker --gh --glab --api` against all three mocks in one session. Verify: exactly one `claude-auth-proxy-<id>` container and one `claude-auth-<id>` network exist; `gh`, `glab` and Claude Code requests all appear in one `docker logs` stream; and both are gone after exit.
+  - _Status:_ Done. Harness phase 5 runs `--gh --glab --api` in one session: one sidecar, gh, glab and api requests in one audit log, nothing left after exit ([CI run 40775594176](https://github.com/schubergphilis/claude-docker/actions/runs/40775594176) at `191a019`).
 - [x] 4.2 Run the local checks from CONTRIBUTING.md (shellcheck, hadolint, `python3 -m unittest discover -s tests`, `bats tests/bats`, smoke cell) and `openspec validate auth-proxy-glab-api --strict`. All must pass.
   - _Status:_ Done. shellcheck, hadolint, unittest, bats and the smoke cells (including the combined `aws+glab+tfe+api+az` cell, which starts a real sidecar) pass in CI ([CI run 40773480271](https://github.com/schubergphilis/claude-docker/actions/runs/40773480271) at `ff7dee4`); `openspec validate auth-proxy-glab-api --strict` passes.
 - [ ] 4.3 Manual run with real credentials, recorded in the PR description:
