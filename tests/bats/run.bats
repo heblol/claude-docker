@@ -49,6 +49,11 @@ setup() {
   mkdir -p "$WS"
 }
 
+# Race tests start a background swapper; never leave it running.
+teardown() {
+  [ -z "${SWAPPER:-}" ] || kill "$SWAPPER" 2>/dev/null || true
+}
+
 # Newline-joined array, for substring assertions.
 lines_of() { printf '%s\n' "$@"; }
 
@@ -635,6 +640,16 @@ setup_linked_skill() {
   [ "$(cat "$stage/skills/foo/lib/up")" = body ]
 }
 
+@test "stage_host_config: a linked skill's .git is not copied" {
+  setup_linked_skill
+  mkdir -p "$REPO/.git/objects"
+  echo obj >"$REPO/.git/objects/x"
+  echo hidden >"$REPO/.hidden"
+  stage_host_config
+  [ ! -e "$stage/skills/foo/.git" ]
+  [ "$(cat "$stage/skills/foo/.hidden")" = hidden ]
+}
+
 @test "stage_host_config: links planted inside a linked skill are not followed" {
   setup_linked_skill
   ln -s "$SECRET/id_ed25519" "$REPO/abs"
@@ -646,6 +661,28 @@ setup_linked_skill() {
   [ ! -e "$stage/skills/foo/abs" ] && [ ! -e "$stage/skills/foo/rel" ] && [ ! -e "$stage/skills/foo/lib/root" ]
   [[ "$stderr" == *"$REPO/abs"* ]]
   [ "$(cat "$stage/skills/foo/SKILL.md")" = body ]
+}
+
+@test "stage_host_config: a trailing-slash link to a skill swapped for a link is refused" {
+  setup_linked_skill
+  rm "$CLAUDE_CONFIG_DIR/skills/foo"
+  ln -s "$REPO/" "$CLAUDE_CONFIG_DIR/skills/foo"
+  rm -rf "$REPO"
+  ln -s "$SECRET" "$REPO"
+  run --separate-stderr stage_host_config
+  [ "$status" -eq 0 ]
+  ! grep -rq key "$stage"
+  [[ "$stderr" == *"skipping"*"skills/foo"* ]]
+}
+
+@test "one_hop: strips trailing slashes, refuses . and .. targets" {
+  mkdir -p "$BATS_TEST_TMPDIR/t"
+  ln -s "$BATS_TEST_TMPDIR/t//" "$BATS_TEST_TMPDIR/slash"
+  [ "$(one_hop "$BATS_TEST_TMPDIR/slash")" = "$BATS_TEST_TMPDIR/t" ]
+  ln -s "$BATS_TEST_TMPDIR/t/." "$BATS_TEST_TMPDIR/dot"
+  ln -s "$BATS_TEST_TMPDIR/t/.." "$BATS_TEST_TMPDIR/dotdot"
+  ! one_hop "$BATS_TEST_TMPDIR/dot"
+  ! one_hop "$BATS_TEST_TMPDIR/dotdot"
 }
 
 @test "stage_host_config: a linked skill swapped for a link is refused" {
@@ -800,22 +837,22 @@ run_statusline() {
 # inode holds and reads in between legitimately succeed; none may return the
 # secret. Against the old [ ! -L ] then cp, this leaked in ~half the reads.
 race_reads() {
-  local sec="$BATS_TEST_TMPDIR/sec" target=$1 swapper leaks=0 reads=0
+  local sec="$BATS_TEST_TMPDIR/sec" target=$1 leaks=0 reads=0
   (
     cd "$WS" || exit 1
     while :; do
       ln -s "$sec/config" "$target.l" && mv -f "$target.l" "$target"
       ln -f "$target.keep" "$target.r" && mv -f "$target.r" "$target"
     done
-  ) &
-  swapper=$!
+  ) 3>&- &
+  SWAPPER=$!
   for _ in $(seq 600); do
     if out=$(cat_nofollow "$WS" .git/config); then
       reads=$((reads + 1))
       [ "$out" = cfg ] || leaks=$((leaks + 1))
     fi
   done
-  kill "$swapper"; wait "$swapper" 2>/dev/null || true
+  kill "$SWAPPER"; wait "$SWAPPER" 2>/dev/null || true
   echo "# $target: reads=$reads leaks=$leaks" >&3
   [ "$leaks" -eq 0 ] && [ "$reads" -gt 0 ]
 }
@@ -840,8 +877,8 @@ race_reads() {
       mv .git .git.keep && ln -s "$sec" .git
       rm .git && mv .git.keep .git
     done
-  ) &
-  swapper=$!
+  ) 3>&- &
+  SWAPPER=$!
   leaks=0 reads=0
   for _ in $(seq 600); do
     if out=$(cat_nofollow "$WS" .git/config); then
@@ -849,7 +886,7 @@ race_reads() {
       [ "$out" = cfg ] || leaks=$((leaks + 1))
     fi
   done
-  kill "$swapper"; wait "$swapper" 2>/dev/null || true
+  kill "$SWAPPER"; wait "$SWAPPER" 2>/dev/null || true
   echo "# .git: reads=$reads leaks=$leaks" >&3
   [ "$leaks" -eq 0 ] && [ "$reads" -gt 0 ]
 }

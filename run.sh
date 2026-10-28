@@ -390,18 +390,42 @@ hostpath() {
 # container, so a session can plant a symlink there, or swap one in while a
 # later launch runs, to make that launch copy another host file (an SSH key, a
 # cloud credential) into its container. [ -L ] then cp is not enough: the link
-# can appear between the two. The helpers below never follow a link they did
-# not mean to, and pin what they checked: each directory is entered and then
-# checked to be the inode lstat named, so the shell's cwd holds it; each file
-# is opened and then checked to be the inode lstat names. lstat of a link is
-# the link's own inode, never its target's, so a swap at any point fails the
-# check. Hard links are no way round it: the session can't name a host file
-# outside its workspaces to link to.
+# can appear between the two. Below a starting directory the caller trusts,
+# the helpers follow no link, and pin what they checked: each directory is
+# entered and then checked to be the inode lstat named, so the shell's cwd
+# holds it; each file is opened and then checked to be the inode lstat names.
+# lstat of a link is the link's own inode, never its target's, so a swap at any
+# point fails the check. Hard links are no way round it: the session can't name
+# a host file outside its workspaces to link to. The starting directory and its
+# parents are resolved normally; docs/security.md states what that leaves open.
 
 # dev:inode of $1, following links (GNU stat, else BSD/macOS stat).
 file_id() { stat -L -c '%d:%i' "$1" 2>/dev/null || stat -L -f '%d:%i' "$1" 2>/dev/null; }
 # dev:inode of $1 itself (lstat).
 link_id() { stat -c '%d:%i' "$1" 2>/dev/null || stat -f '%d:%i' "$1" 2>/dev/null; }
+# macOS reports /dev/fd/N on the fdesc device with the file's inode, so there the
+# open file is matched by inode alone; elsewhere by dev:inode.
+FD_INODE_ONLY=0
+[ "$(uname -s 2>/dev/null)" = Darwin ] && FD_INODE_ONLY=1
+
+# Print ./$1, in the current directory, if it is a regular file and, once open,
+# still the file lstat names. Opens it on fd 9 of the calling shell. A FIFO
+# swapped in between the -f test and the open would block that open: a hang,
+# not a leak, and bash has no portable non-blocking open.
+cat_checked() {
+  local fd id
+  [ -f "./$1" ] && [ ! -L "./$1" ] || return 1
+  exec 9<"./$1" || return 1
+  if fd=$(file_id /dev/fd/9) && id=$(link_id "./$1") \
+     && { [ "$fd" = "$id" ] || { [ "$FD_INODE_ONLY" = 1 ] && [ "${fd#*:}" = "${id#*:}" ]; }; }; then
+    cat <&9
+    fd=$?
+  else
+    fd=1
+  fi
+  exec 9<&-
+  return "$fd"
+}
 
 # Print file $2, a relative path under directory $1, following no symlink in $2.
 # $1 itself is resolved normally. Prints nothing and fails on any mismatch.
@@ -419,23 +443,27 @@ cat_nofollow() {
         *) break ;;
       esac
     done
-    [ -f "./$rest" ] && [ ! -L "./$rest" ] || exit 1
-    exec 9<"./$rest" || exit 1
-    # Inode only: macOS reports /dev/fd/N on the fdesc device, not the file's
-    # (the directory checks above don't go through /dev/fd and keep dev:ino).
-    fd=$(file_id /dev/fd/9) && id=$(link_id "./$rest") && [ "${fd#*:}" = "${id#*:}" ] || exit 1
-    cat <&9
+    cat_checked "$rest"
   ) 2>/dev/null
 }
 
 # Resolve one symlink hop the user made: print $1's target when $1 is a link
 # whose target exists and is not itself a link, or $1 when it is no link.
 # Further hops are refused, because the next link may sit in a workspace.
+# Trailing slashes are stripped first ([ -L dir/ ] looks through a link), and a
+# target ending in . or .. is refused.
 one_hop() {
   local p=$1 t
   if [ -L "$p" ]; then
     t=$(readlink "$p") || return 1
     case $t in /*) ;; *) t="$(dirname "$p")/$t" ;; esac
+    while :; do
+      case $t in
+        / | *[!/]) break ;;
+        *) t=${t%/} ;;
+      esac
+    done
+    case /$t in */. | */..) return 1 ;; esac
     [ -L "$t" ] && return 1
     p=$t
   fi
@@ -474,6 +502,9 @@ copy_tree_nofollow() {
     for e in ./* ./.[!.]* ./..?*; do
       [ -e "$e" ] || [ -L "$e" ] || continue
       n=${e#./}
+      # A skill linked from a repo root would otherwise carry its whole .git,
+      # thousands of files at a few processes each, for nothing in the container.
+      [ "$n" = .git ] && continue
       if [ -L "$e" ] && [ "$hop" = 1 ]; then
         if ! t=$(one_hop "$PWD/$n"); then
           echo "claude-docker: skipping $PWD/$n: a symlink to a symlink, or to nothing" >&2
@@ -495,7 +526,7 @@ copy_tree_nofollow() {
       elif [ -d "$e" ]; then
         copy_tree_nofollow "./$n" "$dest/$n" 0 $((depth + 1)) || exit 1
       elif [ -f "$e" ]; then
-        if cat_nofollow . "$n" >"$dest/$n"; then
+        if cat_checked "$n" >"$dest/$n" 2>/dev/null; then
           [ ! -x "$e" ] || chmod +x "$dest/$n"
         else
           rm -f "$dest/$n"
