@@ -339,7 +339,11 @@ class SidecarBehaviourTest(unittest.TestCase):
         for path in ("/api/v4/projects/123/repository/branches/x", "/api/v4/projects/123/issues/1"):
             with self.subTest(path=path):
                 self.assertEqual(self.glab("DELETE", path)[0], 200)
-        self.assertEqual(self.glab("POST", "/api/v4/projects/user/5")[0], 200)
+        # The imports are the only POSTs GitLab routes on a bare project or group path.
+        for path in ("/api/v4/projects/user/5", "/api/v4/projects/import", "/api/v4/projects/remote-import",
+                     "/api/v4/projects/remote-import-s3", "/api/v4/groups/import", "/api//v4/projects/import.json"):
+            with self.subTest(path=path):
+                self.assertEqual(self.glab("POST", path)[0], 200)
 
     def test_glab_default_policy_refuses_escaped_unreserved_characters(self):
         # GitLab's router decodes these, so they could hide a blocked call.
@@ -348,14 +352,16 @@ class SidecarBehaviourTest(unittest.TestCase):
                              ("DELETE", "/api/v4/projects/%31%32%33"), ("DELETE", "/api/v4/gro%75ps/1"),
                              ("POST", "/api/v4/user/personal%5Faccess%5ftokens"),
                              ("POST", "/api/v4/personal_access_tokens/self/rotate%2Ejson"),
-                             ("GET", "/g/p.git/info/%72efs?service=git-upload-pack")):
+                             ("POST", "/g/p.git/git-%72eceive-pack"),
+                             ("PUT", "/api/v4/personal_access_tokens/self/%72otate")):
             with self.subTest(method=method, path=path):
                 st, body = self.glab(method, path)
                 self.assertEqual(st, 403)
                 self.assertIn("claude-docker glab-proxy policy", body)
-        # Reserved characters keep working: glab escapes / and spaces in paths,
-        # and the query string is not checked.
+        # Reads are not checked (GitLab's docs encode dots in file paths), nor
+        # are reserved characters or the query string.
         for path in ("/api/v4/projects/g%2Fp/repository/files/a%20b.txt/raw",
+                     "/api/v4/projects/1/repository/files/app%2Fmodels%2Fkey%2Erb?ref=main",
                      "/api/v4/projects/g%2fp/issues?search=%61"):
             with self.subTest(path=path):
                 self.assertEqual(self.glab("GET", path)[0], 200)
@@ -384,6 +390,19 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("POST", "/api/v4/personal_access_tokens/self/rotate.json"),
             ("POST", "/api/v4/projects/123/access_tokens.json?x=1"),
             ("POST", "/api/v4/deploy_tokens.json/"),
+            ("POST", "/api/v4/user/keys"),
+            ("POST", "/api/v4/user/gpg_keys"),
+            ("POST", "/api/v4/users/5/keys"),
+            ("POST", "/api/v4/users/5/gpg_keys"),
+            ("POST", "/api/v4/projects/123/deploy_keys"),
+            ("POST", "/api/v4/projects/g%2Fp/deploy_keys/9/enable"),
+            ("POST", "/api/v4/user/runners"),
+            ("POST", "/api/v4/runners"),
+            ("POST", "/api/v4/runners/7/reset_authentication_token"),
+            ("POST", "/api/v4/runners/reset_registration_token"),
+            ("POST", "/api/v4/projects/123/runners/reset_registration_token"),
+            ("POST", "/api/v4/groups/42/runners/reset_registration_token"),
+            ("POST", "/api/v4/projects/123/triggers"),
         )
         for method, path in blocked:
             with self.subTest(method=method, path=path):
@@ -395,6 +414,9 @@ class SidecarBehaviourTest(unittest.TestCase):
             ("GET", "/api/v4/personal_access_tokens"),
             ("GET", "/api/v4/personal_access_tokens/self"),
             ("GET", "/api/v4/projects/123/access_tokens"),
+            ("GET", "/api/v4/user/keys"),
+            ("GET", "/api/v4/projects/123/triggers"),
+            ("POST", "/api/v4/projects/123/runners"),
             ("POST", "/api/v4/projects/1/issues"),
             ("POST", "/api/v4/projects/1/merge_requests"),
         )

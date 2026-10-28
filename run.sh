@@ -1067,16 +1067,19 @@ CADDY
 # on git smart-HTTP, nothing anywhere else (web UI paths don't serve glab or
 # git). Not on LFS either: the batch response echoes a usable credential back
 # to the client (actions.*.header.Authorization). The default policy blocks
-# project/group deletion and the REST calls that create or rotate tokens (they
-# return a real credential). Both match the raw request URI: path_regexp sees
-# the decoded path, so a URL-encoded project path (group%2Fproject) would slip
-# past it. A raw match can be dodged by percent-encoding a letter
-# (/api/v4/%70rojects/1), which GitLab's router decodes, so a request that
-# escapes an unreserved character is refused outright; no client sends one.
-# Deletion also matches POST: Rack::MethodOverride turns a POST carrying
-# _method=delete or X-HTTP-Method-Override: DELETE into a DELETE, and GitLab
-# has no POST on a bare project or group path. Request headers are dropped
-# from the access log.
+# project/group deletion and the REST calls that hand out a credential that
+# outlives the session: tokens, SSH/GPG/deploy keys, runner and trigger
+# tokens. Best effort: GraphQL is not filtered, and token scope is the real
+# limit. Both match the raw request URI: path_regexp sees the decoded path, so
+# a URL-encoded project path (group%2Fproject) would slip past it. A raw match
+# can be dodged by percent-encoding a letter (/api/v4/%70rojects/1), which
+# GitLab's router decodes, so a write (DELETE/POST/PUT, what the policy
+# checks) that escapes an unreserved character is refused; reads pass, since
+# GitLab's own docs encode dots in file paths. Deletion also matches POST:
+# Rack::MethodOverride turns a POST carrying _method=delete or
+# X-HTTP-Method-Override: DELETE into a DELETE. The only POSTs on a bare
+# project or group path are the imports, which are let through. Request
+# headers are dropped from the access log.
 stage_glab_proxy_site() {
   if [ -n "${CLAUDE_DOCKER_GLAB_POLICY:-}" ]; then
     cp "$CLAUDE_DOCKER_GLAB_POLICY" "$1/glab-policy.caddy" || exit 1
@@ -1104,18 +1107,25 @@ stage_glab_proxy_site() {
 		@glab_proxy_git path_regexp (/info/refs|/git-upload-pack|/git-receive-pack)$
 		request_header @glab_proxy_git Authorization "{env.GLAB_PROXY_BASIC}"
 
-		@glab_proxy_escaped vars_regexp {http.request.uri} ^[^?]*%(2[DEde]|3[0-9]|4[1-9A-Fa-f]|5[0-9AFaf]|6[1-9A-Fa-f]|7[0-9AEae])
+		@glab_proxy_escaped {
+			method DELETE POST PUT
+			vars_regexp {http.request.uri} ^[^?]*%(2[DEde]|3[0-9]|4[1-9A-Fa-f]|5[0-9AFaf]|6[1-9A-Fa-f]|7[0-9AEae])
+		}
 		respond @glab_proxy_escaped "claude-docker glab-proxy policy: a percent-encoded letter, digit or -._~ in the path is refused, since it could hide a blocked call. Send it unencoded, or bypass the proxy entirely with --glab-direct." 403
 		@glab_proxy_delete {
 			method DELETE POST
 			vars_regexp {http.request.uri} ^/+api/+v4/+(projects|groups)/+[^/?]+/*(\?.*)?$
+			not {
+				method POST
+				vars_regexp {http.request.uri} ^/+api/+v4/+(projects|groups)/+(import|remote-import|remote-import-s3)(\.json)?/*(\?.*)?$
+			}
 		}
 		respond @glab_proxy_delete "claude-docker glab-proxy policy: project and group deletion is blocked by default. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		@glab_proxy_mint {
 			method POST PUT
-			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens)(\.json)?/*(\?.*)?$
+			vars_regexp {http.request.uri} ^/+api/+v4/+(personal_access_tokens/+[^/?]+/+rotate|user/+personal_access_tokens|users/+[^/?]+/+(personal_access_tokens|impersonation_tokens)|(projects|groups)/+[^/?]+/+(access_tokens|deploy_tokens)(/+[^/?]+/+rotate)?|groups/+[^/?]+/+service_accounts/+[^/?]+/+personal_access_tokens(/+[^/?]+/+rotate)?|deploy_tokens|user/+(keys|gpg_keys|runners)|users/+[^/?]+/+(keys|gpg_keys)|(projects|groups)/+[^/?]+/+deploy_keys(/+[^/?]+/+enable)?|projects/+[^/?]+/+triggers|runners(/+[^/?]+/+reset_authentication_token|/+reset_registration_token)?|(projects|groups)/+[^/?]+/+runners/+reset_registration_token)(\.json)?/*(\?.*)?$
 		}
-		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating access tokens is blocked by default, since the response would hand a real credential to the container. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
+		respond @glab_proxy_mint "claude-docker glab-proxy policy: creating or rotating tokens, or adding SSH, GPG or deploy keys, is blocked by default, since it would hand the container a credential that outlives the session. Extend policy via CLAUDE_DOCKER_GLAB_POLICY, or bypass the proxy entirely with --glab-direct." 403
 		import /etc/caddy/glab-policy.caddy
 
 		reverse_proxy {$GLAB_PROXY_UPSTREAM}

@@ -119,7 +119,7 @@ Under `--glab`, whether or not a token was found, the `config.yml` copy mounted 
 
 ### Requirement: GitLab request filtering policy
 
-The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or group, a `POST` to the same paths (GitLab honours `_method=delete` and `X-HTTP-Method-Override` on a `POST`), a REST `POST` or `PUT` that creates or rotates a token, and any request whose path percent-encodes an unreserved character (`A-Z a-z 0-9 - . _ ~`), on the proxied host. Matching SHALL run on the raw, still percent-encoded request URI under `/api/v4/`, tolerating repeated slashes, a trailing slash, a `.json` suffix and a query string. Token creation through GraphQL is not filtered. The `403` body SHALL name the claude-docker glab-proxy policy.
+The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or group, a `POST` to the same paths other than the project and group imports (GitLab honours `_method=delete` and `X-HTTP-Method-Override` on a `POST`), a REST `POST` or `PUT` that creates or rotates a token or adds an SSH, GPG or deploy key, a runner or a pipeline trigger, and a `DELETE`, `POST` or `PUT` whose path percent-encodes an unreserved character (`A-Z a-z 0-9 - . _ ~`), on the proxied host. The filter is best effort, not a guarantee that no durable credential can be obtained. Matching SHALL run on the raw, still percent-encoded request URI under `/api/v4/`, tolerating repeated slashes, a trailing slash, a `.json` suffix and a query string. Token creation through GraphQL is not filtered. The `403` body SHALL name the claude-docker glab-proxy policy.
 
 #### Scenario: Project deletion is blocked by default
 
@@ -136,16 +136,17 @@ The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or g
 
 - **WHEN** `POST /api/v4/projects/123` with `X-HTTP-Method-Override: DELETE`, or with a `_method=delete` form body, runs inside the agent container
 - **THEN** the response is `403` and the request never reaches GitLab
+- **AND** `POST /api/v4/projects/import` and `POST /api/v4/groups/import` are still forwarded
 
 #### Scenario: An escaped unreserved character cannot hide a blocked call
 
 - **WHEN** `DELETE /api/v4/%70rojects/123` or `POST /api/v4/user/personal%5Faccess%5Ftokens` runs inside the agent container
 - **THEN** the response is `403` naming the claude-docker glab-proxy policy
-- **AND** `GET /api/v4/projects/group%2Fp/repository/files/a%20b.txt/raw` is still forwarded
+- **AND** `GET /api/v4/projects/group%2Fp/repository/files/a%20b.txt/raw` and `GET /api/v4/projects/1/repository/files/app%2Fmodels%2Fkey%2Erb?ref=main` are still forwarded
 
-#### Scenario: Token creation and rotation are blocked by default
+#### Scenario: Durable credential creation is blocked by default
 
-- **WHEN** a `POST` or `PUT` under `/api/v4/` runs inside the agent container on any of: `personal_access_tokens/:id/rotate` (`:id` may be `self`), `user/personal_access_tokens`, `users/:id/personal_access_tokens`, `users/:id/impersonation_tokens`, `(projects|groups)/:id/access_tokens` and `.../access_tokens/:id/rotate`, `(projects|groups)/:id/deploy_tokens`, `deploy_tokens`, `groups/:id/service_accounts/:id/personal_access_tokens` and its `rotate`
+- **WHEN** a `POST` or `PUT` under `/api/v4/` runs inside the agent container on any of: `personal_access_tokens/:id/rotate` (`:id` may be `self`), `user/personal_access_tokens`, `users/:id/personal_access_tokens`, `users/:id/impersonation_tokens`, `(projects|groups)/:id/access_tokens` and `.../access_tokens/:id/rotate`, `(projects|groups)/:id/deploy_tokens`, `deploy_tokens`, `groups/:id/service_accounts/:id/personal_access_tokens` and its `rotate`, `user/keys`, `user/gpg_keys`, `users/:id/keys`, `users/:id/gpg_keys`, `(projects|groups)/:id/deploy_keys` and `.../deploy_keys/:id/enable`, `user/runners`, `runners`, `runners/:id/reset_authentication_token`, `runners/reset_registration_token`, `(projects|groups)/:id/runners/reset_registration_token`, `projects/:id/triggers`
 - **THEN** the response is `403` naming the claude-docker glab-proxy policy
 - **AND** the request never reaches GitLab
 
