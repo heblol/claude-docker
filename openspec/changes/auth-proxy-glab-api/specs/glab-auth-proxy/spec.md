@@ -119,7 +119,7 @@ Under `--glab`, whether or not a token was found, the `config.yml` copy mounted 
 
 ### Requirement: GitLab request filtering policy
 
-The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or group, a `POST` to the same paths other than the project and group imports (GitLab honours `_method=delete` and `X-HTTP-Method-Override` on a `POST`), a REST `POST` or `PUT` that creates or rotates a token or adds an SSH, GPG or deploy key, a runner, a pipeline trigger, a cluster-agent token, or a project or group member or invitation, any request whose target is not origin-form (does not start with `/`), and a `DELETE`, `POST` or `PUT` whose path percent-encodes an unreserved character (`A-Z a-z 0-9 - . _ ~`), on the proxied host. The filter is best effort, not a guarantee that no durable credential can be obtained. Matching SHALL run on the raw, still percent-encoded request URI under `/api/v4/`, tolerating repeated slashes, a trailing slash, a `.json` suffix and a query string. Token creation through GraphQL is not filtered. The `403` body SHALL name the claude-docker glab-proxy policy.
+The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or group, a `POST` to the same paths other than the project and group imports (GitLab honours `_method=delete` and `X-HTTP-Method-Override` on a `POST`), a REST `POST` or `PUT` that creates or rotates a token or adds an SSH, GPG or deploy key, a runner, a pipeline trigger, a cluster-agent token, or a project or group member or invitation, and a `DELETE`, `POST` or `PUT` whose path percent-encodes an unreserved character (`A-Z a-z 0-9 - . _ ~`), on the proxied host. The filter is best effort, not a guarantee that no durable credential can be obtained. Matching SHALL run on the raw, still percent-encoded request URI under `/api/v4/`, tolerating repeated slashes, a trailing slash, a `.json` suffix and a query string. Token creation through GraphQL is not filtered. The `403` body SHALL name the claude-docker glab-proxy policy.
 
 #### Scenario: Project deletion is blocked by default
 
@@ -150,7 +150,7 @@ The sidecar SHALL answer `403`, without forwarding, a `DELETE` of a project or g
 - **THEN** the response is `403` naming the claude-docker glab-proxy policy
 - **AND** the request never reaches GitLab
 
-#### Scenario: An absolute-form request target is refused
+#### Scenario: An absolute-form request target is matched like an origin-form one
 
 - **WHEN** `DELETE https://gitlab.example.com/api/v4/projects/1 HTTP/1.1` is sent from the agent container
 - **THEN** the response is `403` naming the claude-docker glab-proxy policy

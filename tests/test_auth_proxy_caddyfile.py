@@ -359,13 +359,12 @@ class SidecarBehaviourTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.glab("POST", path)[0], 200)
 
-    def test_glab_default_policy_refuses_an_absolute_form_target(self):
-        # The raw URI then starts with the scheme, so the anchored matches would
-        # miss it while the parsed path still gets the token.
+    def test_glab_default_policy_covers_an_absolute_form_target(self):
+        # {http.request.uri} is origin-form even for an absolute-form request
+        # line, so the anchored matches still apply.
         self._start()
         for method, target in (("DELETE", "https://gl.example.test/api/v4/projects/1"),
-                               ("POST", "https://gl.example.test/api/v4/user/personal_access_tokens"),
-                               ("GET", "https://gl.example.test/api/v4/user")):
+                               ("POST", "https://gl.example.test/api/v4/user/personal_access_tokens")):
             with self.subTest(method=method, target=target):
                 st, body = self.glab(method, target)
                 self.assertEqual(st, 403)

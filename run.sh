@@ -1079,10 +1079,9 @@ CADDY
 # Rack::MethodOverride turns a POST carrying _method=delete or
 # X-HTTP-Method-Override: DELETE into a DELETE. The only POSTs on a bare
 # project or group path are the imports, which are let through. Request
-# An absolute-form request target (DELETE https://host/api/...) keeps the
-# scheme and host in the raw URI, so the anchored matches would miss it while
-# the path still gets the token: it is refused first. Request headers are
-# dropped from the access log.
+# {http.request.uri} is the origin-form path and query even for an
+# absolute-form request line (DELETE https://host/api/...), so the anchored
+# matches cover that too. Request headers are dropped from the access log.
 stage_glab_proxy_site() {
   if [ -n "${CLAUDE_DOCKER_GLAB_POLICY:-}" ]; then
     cp "$CLAUDE_DOCKER_GLAB_POLICY" "$1/glab-policy.caddy" || exit 1
@@ -1101,10 +1100,6 @@ stage_glab_proxy_site() {
 	}
 
 	route {
-		@glab_proxy_absolute {
-			not vars_regexp {http.request.uri} ^/
-		}
-		respond @glab_proxy_absolute "claude-docker glab-proxy policy: an absolute-form request target is refused, since it would slip past the policy below. Send an origin-form request, or bypass the proxy entirely with --glab-direct." 403
 		request_header -Authorization
 		request_header -PRIVATE-TOKEN
 		request_header -JOB-TOKEN
