@@ -820,6 +820,20 @@ glab_host_of() {
   printf '%s' "$h"
 }
 
+# Scope a credential helper to one host[:port]. git matches credential.<url>
+# keys by URL, and an empty host (from e.g. AZURE_DEVOPS_ORG_URL=https://)
+# matches every host, while a * glob widens to every host it covers. Anything
+# but a plain hostname gets no helper, so the token is never offered beyond
+# its forge.
+add_cred_helper() {
+  local flag=$1 var=$2 host=$3 helper=$4
+  if [[ ! "$host" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]+)?$ ]]; then
+    echo "claude-docker: $flag: $var has no usable host ('$host'); git over HTTPS gets no credential helper" >&2
+    return 0
+  fi
+  GIT_CFG+=("credential.https://$host.helper" "$helper")
+}
+
 # The forwarded forge tokens reach the CLIs but not git: over HTTPS, git has no
 # credential helper and fails with "could not read Username". Give it one per
 # opted-in forge, each scoped to that forge's host so git never offers a token
@@ -835,14 +849,14 @@ build_git_config() {
     # discover_tokens has set GITLAB_HOST to the token's host when it found one.
     host=${GITLAB_HOST:-gitlab.com}
     host=${host#*://}; host=${host%%/*}
-    GIT_CFG+=("credential.https://$host.helper" "!glab auth git-credential")
+    add_cred_helper --glab-direct GITLAB_HOST "$host" "!glab auth git-credential"
   fi
   if [ "$WITH_AZ" = "1" ]; then
     host=${AZURE_DEVOPS_ORG_URL:-https://dev.azure.com}
     host=${host#*://}; host=${host%%/*}
     # \$ stays literal: the PAT is read from env when git runs the helper, so it
     # is never on argv or in the helper string.
-    GIT_CFG+=("credential.https://$host.helper" "!f() { test \"\$1\" = get && echo username=pat && echo \"password=\$AZURE_DEVOPS_EXT_PAT\"; }; f")
+    add_cred_helper --az AZURE_DEVOPS_ORG_URL "$host" "!f() { test \"\$1\" = get && echo username=pat && echo \"password=\$AZURE_DEVOPS_EXT_PAT\"; }; f"
   fi
   while [ "$i" -lt "${#GIT_CFG[@]}" ]; do
     ENV_ARGS+=("-e" "GIT_CONFIG_KEY_$((i / 2))=${GIT_CFG[i]}" "-e" "GIT_CONFIG_VALUE_$((i / 2))=${GIT_CFG[i + 1]}")
