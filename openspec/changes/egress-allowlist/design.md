@@ -286,7 +286,9 @@ error code.
    `--egress-allowlist` refuses any runtime but docker before creating a
    resource. The smoke cell (`tests/smoke/egress.sh --allowlist`) logs the
    code Docker returns on every CI run and fails when it isn't in the list,
-   or when an unreachable resolver's code is (task 0.5).
+   or when an unreachable resolver's code is (task 0.5). First CI run, Docker
+   28.0.4: `ESERVFAIL` on the internal network, `ECONNREFUSED` against an
+   unreachable resolver.
 
 The resolver timeout is inside the script, because macOS has no `timeout`
 on the host.

@@ -70,7 +70,9 @@ squid_parse() {
     --entrypoint /usr/sbin/squid "$SQUID_IMAGE" -k parse -f /etc/squid/squid.conf 2>&1
 }
 
-# 1. Every config the bats suite wrote parses cleanly.
+# 1. Every config the bats suite wrote parses cleanly. `via off` is
+# deliberate (the proxy doesn't announce itself) and squid warns about it on
+# every config, plain --egress-lock's included; that one warning is allowed.
 check_generated() {
   local dir="$HERE/generated" f out want have
   want=$(sed -e '/^#/d' -e '/^$/d' "$HERE/expected-configs.txt" | sort)
@@ -80,6 +82,7 @@ check_generated() {
 $(diff <(printf '%s\n' "$want") <(printf '%s\n' "$have") || true)"
   for f in $have; do
     out=$(squid_parse "$dir/$f") || { fail "squid -k parse $f exited non-zero: $out"; continue; }
+    out=$(grep -v 'WARNING: HTTP requires the use of Via' <<<"$out") || true
     if grep -qE 'WARNING|ERROR' <<<"$out"; then
       fail "squid -k parse $f: $(grep -E 'WARNING|ERROR' <<<"$out" | head -3)"
     else
@@ -181,10 +184,12 @@ run_table() {
     [ -n "$expect" ] || continue
     printf '%s\n' "$req" >>"$WORK/requests"
   done <"$table"
-  # One status line per request; nc -w bounds a tunnel that stays open.
+  # One status line per request; nc -w bounds a tunnel that stays open. The
+  # sleep keeps the client's side open: squid abandons a request whose
+  # client half-closed while its DNS lookup was still pending.
   docker run --rm --network "$NET" -v "$WORK/requests:/requests:ro" --entrypoint sh "$HELPER_IMAGE" -c '
     while IFS= read -r r; do
-      s=$(printf "$r" | nc -w 4 '"$SQUID_IP"' 3128 2>/dev/null | head -1 | cut -d" " -f2)
+      s=$({ printf "$r"; sleep 2; } | nc -w 4 '"$SQUID_IP"' 3128 2>/dev/null | head -1 | cut -d" " -f2)
       echo "${s:-none}"
     done </requests' >"$WORK/codes"
   while IFS=$'\t' read -r expect req; do
