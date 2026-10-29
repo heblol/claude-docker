@@ -278,6 +278,16 @@ error code.
    address, `ETIMEOUT`, `ECONNREFUSED`, any other code, or a probe that can't
    run aborts the session. This doesn't depend on timing.
 
+   As implemented: the passing codes are `ENOTFOUND`, `EREFUSED`,
+   `ESERVFAIL` and `ENODATA` (`EGRESS_DNS_CLOSED_CODES` in `run.sh`), each an
+   answer without an address. `ESERVFAIL` is safe because the control has just
+   resolved on the outbound network: a forwarding internal resolver would
+   have answered with the address. Podman couldn't be checked, so
+   `--egress-allowlist` refuses any runtime but docker before creating a
+   resource. The smoke cell (`tests/smoke/egress.sh --allowlist`) logs the
+   code Docker returns on every CI run and fails when it isn't in the list,
+   or when an unreachable resolver's code is (task 0.5).
+
 The resolver timeout is inside the script, because macOS has no `timeout`
 on the host.
 
@@ -372,6 +382,15 @@ so nobody sells it as a DLP control:
 2. The base requirement "The network is the boundary" states DNS closure
    unconditionally; only `--egress-allowlist` checks it. Whether to scope that
    sentence is left to the archive of this change (task 5.2).
+
+## Implementation notes
+
+- Tasks 0.1-0.4, 0.6 and 0.7 are permanent cases in
+  `tests/egress-proxy/harness.sh`, which runs the real squid in CI (it needs
+  Docker); 0.5 is in the `--allowlist` smoke cell. They were written without
+  a local engine, so their first CI run is the check.
+- `egress_allowed_names` takes one `acl` line per name rather than one long
+  line, which could pass squid's config line limit.
 
 ## Appendix A. squid 7.6 behaviour checked during review
 
