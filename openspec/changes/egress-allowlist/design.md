@@ -105,9 +105,12 @@ An exact entry or a covering `.suffix`, with or without a port, counts. A
 `.suffix` covers the domain itself and every subdomain, as squid's
 `dstdomain` does and as the existing provider check (`run.sh:439`) does:
 `.github.com` covers `github.com` and `api.github.com`; `.github.io` and
-`notgithub.com` cover neither. The checks test whether a token was found
-(`GH_HOST_TOKEN`, `GLAB_HOST_TOKEN`), because the `*_SIDECAR_ACTIVE` flags
-are only set later. With the hosts listed, the direct path matches
+`notgithub.com` cover neither. The checks use the same condition as
+`start_auth_sidecar` (`run.sh:1605`, `1609`): `WITH_GH=1` and a non-empty
+`GH_HOST_TOKEN`, and `WITH_GLAB=1` and a non-empty `GLAB_HOST_TOKEN`. The flag
+matters, because `GH_HOST_TOKEN` is also set without `--gh` whenever
+`GH_TOKEN` is exported; the `*_SIDECAR_ACTIVE` flags themselves are only set
+later. With the hosts listed, the direct path matches
 the policy. The upstream checks run in `validate_opts`. The host checks need
 to know whether a sidecar will run and, for `--glab`, the proxied host, which
 `discover_tokens` sets from `GITLAB_HOST` or glab's own discovery; so they run
@@ -116,8 +119,10 @@ container resource exists.
 
 `CLAUDE_DOCKER_GH_POLICY` and `CLAUDE_DOCKER_GLAB_POLICY` snippets can add
 routes inside the sidecar. Under `--egress-allowlist` their files get the same
-resolve-and-containment check as the allowlist file (D4), so a session can't
-edit them for a later one; what they contain is the user's choice, and Risks
+treatment as the allowlist file (D4 steps 1-3: resolve, containment check,
+one in-memory read, control-byte check), and `stage_gh_proxy_site` /
+`stage_glab_proxy_site` write those bytes into the stage instead of copying
+the original path, so the file can't change between the check and its use; what they contain is the user's choice, and Risks
 names them. The `--api` sidecar needs no check: it only forwards to the
 endpoint.
 
@@ -262,7 +267,10 @@ error code.
    would prove nothing, so the session aborts as inconclusive.
 2. **Check,** on the internal network: it must return a code showing that the
    resolver answered without an address. Task 0.5 records which code Docker ≥
-   26 returns (expected `ENOTFOUND` or `EREFUSED`), and only those pass. An
+   26 and rootless podman (netavark, aardvark-dns) return (expected
+   `ENOTFOUND` or `EREFUSED`), and only the codes recorded for the session's
+   runtime pass. If podman can't be checked, `--egress-allowlist` is
+   Docker-only until it is, and the abort message names the runtime. An
    address, `ETIMEOUT`, `ECONNREFUSED`, any other code, or a probe that can't
    run aborts the session. This doesn't depend on timing.
 
@@ -280,8 +288,10 @@ Under `--egress-allowlist`, and only then:
   The EXIT trap removes the stage directory before it saves the log, so the
   stage copy can't be used at teardown. If the directory or the file can't be
   created or written, `run.sh` exits 1 before the proxy starts, naming the
-  path, like the other startup steps; only the teardown copy in
-  `egress_save_log` warns and continues.
+  path, like the other startup steps. At teardown, `egress_save_log` only
+  warns and continues: the `.meta` write is guarded like its `mkdir`, and the
+  EXIT trap calls `egress_save_log || true`, so under `set -e` a failed write
+  can't skip the sidecar and network removals that follow it.
 - `.meta` gains `allowlist_file` (the resolved path), `allowlist_sha256` and
   `allowlist_add_hosts` (the `--add-host` entries given to squid, from
   `CLAUDE_DOCKER_ADD_HOSTS` and the sidecars), from globals set at startup.

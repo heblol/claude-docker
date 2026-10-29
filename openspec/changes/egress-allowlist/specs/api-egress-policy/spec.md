@@ -137,7 +137,7 @@ Under `--egress-allowlist`, `run.sh` SHALL exit 1 before creating any container 
 
 ### Requirement: Sidecar policy snippets lie outside every workspace
 
-Under `--egress-allowlist`, the files named by `CLAUDE_DOCKER_GH_POLICY` and `CLAUDE_DOCKER_GLAB_POLICY` SHALL pass the same resolve-and-containment check as the allowlist file, or `run.sh` SHALL exit 1 before creating any container resource.
+Under `--egress-allowlist`, the files named by `CLAUDE_DOCKER_GH_POLICY` and `CLAUDE_DOCKER_GLAB_POLICY` SHALL pass the same resolve, containment and control-byte checks as the allowlist file, or `run.sh` SHALL exit 1 before creating any container resource. The bytes read for the check SHALL be the bytes staged for the sidecar.
 
 #### Scenario: Policy snippet inside the workspace
 
