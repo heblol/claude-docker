@@ -28,8 +28,9 @@ established knob.
 **Goals:**
 
 - Under `--egress-allowlist`, a session reaches only the model endpoint and
-  the hosts in the allowlist file, by any client, and its own list can't be
-  changed from inside the session.
+  the hosts in the allowlist file, by any client (except routes the user adds
+  in a sidecar policy snippet, see Risks), and its own list can't be changed
+  from inside the session.
 - Unlisted names aren't resolved, by squid or by the engine's DNS.
 - The saved evidence shows which rules ran and which file they came from.
 - Sessions without the flag are unchanged, down to the generated squid
@@ -39,8 +40,8 @@ established knob.
 
 - The follow-ups in D9; a per-repository list; subscription sessions; TLS
   interception; per-path rules; non-HTTP protocols.
-- Closing exfiltration through an allowed host, or a list widened by an
-  earlier session (see Risks).
+- Closing exfiltration through an allowed host, or a list widened for a
+  session that starts after a write to the file (see Risks).
 
 ## Decisions
 
@@ -54,11 +55,13 @@ established knob.
 
 ### D2. The file is the only source
 
-The **effective allowlist** is: the `ANTHROPIC_BASE_URL` endpoint on its
-port; under `--api`, `claude-docker-api-proxy` on 8080; under `--glab`, the
-GitLab host on its own port when it has one (as the existing composition
-requirement allows); and the entries of **one allowlist file**. Nothing else
-adds a host: no flag, no credential option, no fallback path.
+The **effective allowlist** is a set of names: the `ANTHROPIC_BASE_URL`
+host, `claude-docker-api-proxy` under `--api`, and the hosts and suffixes in
+**one allowlist file**. Every name on it is reachable on 80 and 443. A few
+also get one extra port: the endpoint on its own port, `claude-docker-api-proxy`
+on 8080, the `--glab` host on its own port (as the composition requirement
+allows), and each file entry written with `:port`. Nothing else adds a host:
+no flag, no credential option, no fallback path.
 
 The file is `FILE` from `--egress-allowlist=FILE`, else the path in
 `CLAUDE_DOCKER_EGRESS_ALLOWLIST`. With neither, `run.sh` refuses to start:
@@ -96,11 +99,20 @@ and the sidecar forwards to its upstream regardless of squid's list. Under
   because they point the sidecar at an arbitrary upstream that no entry
   describes.
 
-An exact entry or a covering `.suffix`, with or without a port, counts. With
-the hosts listed, the direct path matches the policy. `CLAUDE_DOCKER_GH_POLICY`
-and `CLAUDE_DOCKER_GLAB_POLICY` snippets can still add routes inside the
-sidecar; they are host-side files the user chose, and Risks names them. The
-`--api` sidecar needs no check: it only forwards to the endpoint.
+An exact entry or a covering `.suffix`, with or without a port, counts;
+`.github.com` covers `api.github.com` but not `github.com` itself, and
+`notgithub.com` covers nothing. With the hosts listed, the direct path matches
+the policy. The `--gh` and upstream checks run in `validate_opts`. The
+`--glab` check needs the proxied host, which `discover_tokens` sets from
+`GITLAB_HOST` or glab's own discovery, so it runs after discovery and before
+`create_egress_networks`, still before any container resource exists.
+
+`CLAUDE_DOCKER_GH_POLICY` and `CLAUDE_DOCKER_GLAB_POLICY` snippets can add
+routes inside the sidecar. Under `--egress-allowlist` their files get the same
+resolve-and-containment check as the allowlist file (D4), so a session can't
+edit them for a later one; what they contain is the user's choice, and Risks
+names them. The `--api` sidecar needs no check: it only forwards to the
+endpoint.
 
 ### D4. Reading the file safely
 
@@ -108,25 +120,31 @@ All checks run in `validate_opts`, before runtime detection, so they are
 testable without an engine.
 
 1. **Resolve the file itself.** Follow the path's own symlink chain with a
-   bounded `readlink` loop (relative targets against the link's directory;
-   bash 3.2-safe, no `readlink -f` or `realpath`), then `cd -P` into the
-   final directory and take `pwd -P`. The result is the **resolved path**.
+   `readlink` loop of at most 40 links (relative targets against the link's
+   directory; bash 3.2-safe, no `readlink -f` or `realpath`; more links is
+   refused as a loop), then `cd -P` into the final directory, take `pwd -P`
+   and append the basename. The result is the **resolved path**.
 2. **Refuse a file inside a workspace.** Resolve each workspace with
    `cd -P … && pwd -P` (today's workspace code uses plain `pwd`, which keeps
    symlinks, so it can't be reused) and refuse the file if its resolved path
    is inside any of them, read-only or not, comparing on a `/` boundary.
-3. **Read once.** Copy the resolved file once into the session's stage
-   directory (mode 0600, removed by the existing EXIT trap). Hash and parse
-   only that copy, so the recorded SHA-256 is that of the bytes parsed and
-   equals `sha256sum` of the file at the time it was read. The hash tool is
-   `sha256sum`, else `shasum -a 256`; with neither, `--egress-allowlist`
-   refuses to start. A file containing NUL or control bytes other than CR, LF
-   and TAB is refused.
+3. **Read once, in memory.** The stage directory and its EXIT trap don't
+   exist yet when `validate_opts` runs, so there is no disk copy. `run.sh`
+   reads the resolved file once with `content=$(cat -- "$f"; printf x)` and
+   strips the `x`, which keeps trailing newlines. Under `LC_ALL=C`, the
+   length of `content` must equal `wc -c` of the file; a mismatch means NUL
+   bytes (which bash drops) or a file that changed during the read, and is
+   refused. Control bytes other than CR, LF and TAB are refused too. The hash
+   is `printf '%s' "$content"` piped to `sha256sum`, else `shasum -a 256`;
+   with neither tool, `--egress-allowlist` refuses to start. Parsing reads the
+   same variable, including a last line without a newline
+   (`while IFS= read -r line || [ -n "$line" ]`). The resolved path and hash
+   are kept in shell variables for the evidence (D8).
 
 This keeps the agent from changing the list of its own session. It can't
 stop a session that could write the file, or an env file that sets
-`CLAUDE_DOCKER_EGRESS_ALLOWLIST`, from widening a later or concurrent
-session's list (Risks). Hard links into a workspace aren't detectable by path;
+`CLAUDE_DOCKER_EGRESS_ALLOWLIST`, from widening the list of a session that
+starts after the write (Risks). Hard links into a workspace aren't detectable by path;
 the docs say to keep the file outside every workspace.
 
 ### D5. Entry format and validation
@@ -138,8 +156,10 @@ pypi.org                      exact host           # trailing comments too
 git.corp.example:8443         host or .suffix with a port
 ```
 
-A trailing CR is stripped. Every entry is checked before any container
-resource exists:
+A trailing CR, leading and trailing spaces and tabs, and a trailing
+` # comment` are stripped; whitespace inside an entry is invalid. The entry is
+lowercased before it is checked, so every check is case-insensitive. Every
+entry is checked before any container resource exists:
 
 - **Host:** letters, digits, `-` and `.`, at most 253 characters, labels of
   1-63 characters that don't start or end with `-`, no trailing dot. This is
@@ -153,11 +173,11 @@ resource exists:
   refused with a hint to write `.example.com`.
 - **Port:** 1-65535.
 - **Not a provider host:** `anthropic.com`, `claude.ai`, `claude.com` or a
-  subdomain of one, compared case-insensitively, so the list can't contradict
-  the lock.
+  subdomain of one, so the list can't contradict the lock. The check reuses
+  `EGRESS_MODEL_PROVIDERS`, the list the endpoint check already uses.
 
-Hosts are lowercased after validation. An invalid entry is fatal, naming the
-file and line; `run.sh` reports every invalid line, not only the first.
+An invalid entry is fatal, naming the file and line; `run.sh` reports every
+invalid line, not only the first.
 
 Duplicates and overlaps are not the user's problem: when it builds the squid
 ACLs, `run.sh` drops exact duplicate names and names covered by a listed
@@ -174,8 +194,8 @@ Under `--egress-allowlist`:
  3. deny !egress_allowed_names                                    (name only, NEW)
  4. deny egress_metadata_addrs, egress_linklocal, egress_loopback  (dst)
  5. deny egress_model_providers                                   (moved up)
- 6. allow the endpoint on its port; the auth-proxy names on their
-    ports; each entry with a port on that port                   (NEW pairs)
+ 6. allow the endpoint on its port; claude-docker-api-proxy on 8080;
+    the --glab host on its port; each entry with a port on it     (NEW pairs)
  7. deny !egress_ports; deny CONNECT !egress_tls_port
  8. allow egress_allowed_names                                    (NEW)
  9. deny all                                                      (was: allow all)
@@ -215,9 +235,9 @@ defeats the purpose, so the session checks it before starting.
 After `create_egress_networks` and before `start_egress_sidecar`, so a failure
 never leaves a running proxy, `run.sh` runs two short probes from the agent
 image, with the agent's user and `--cap-drop`, named
-`claude-egress-proxy-<id>-probe` so the existing stopped-only prune
-(`^claude-egress-proxy-`) covers it, with `--rm`, and removed by the EXIT
-trap:
+`claude-egress-proxy-<id>-probe-control` and `…-probe-check` so the existing
+stopped-only prune (`^claude-egress-proxy-`) covers them, with `--rm`, and
+both removed by name in the EXIT trap:
 
 1. **Control:** `timeout 10 getent hosts example.org` on the outbound network
    (`claude-egress-out-<id>`) must succeed. If it doesn't, DNS is unavailable
@@ -233,14 +253,17 @@ no `timeout` on the host.
 
 Under `--egress-allowlist`, and only then:
 
-- The generated `squid.conf` is written to `<start>-<id>.conf` in the
-  evidence directory (mode 0600) when it is generated, before the agent
-  starts. The EXIT trap removes the stage directory before it saves the log,
-  so the stage copy can't be used at teardown.
+- When the squid config is generated, before the agent starts, `run.sh`
+  computes the session's start timestamp, creates the evidence directory
+  (`mkdir -p`, mode 700, as `egress_save_log` does), and writes the same file
+  that is mounted into squid to `<start>-<id>.conf` there under `umask 077`.
+  The EXIT trap removes the stage directory before it saves the log, so the
+  stage copy can't be used at teardown.
 - `.meta` gains `allowlist_file` (the resolved path), `allowlist_sha256` and
   `allowlist_add_hosts` (the `--add-host` entries given to squid, from
-  `CLAUDE_DOCKER_ADD_HOSTS` and the sidecars). `--add-host` decides where a
-  listed name connects, and isn't in `squid.conf`.
+  `CLAUDE_DOCKER_ADD_HOSTS` and the sidecars), from variables set at startup.
+  `--add-host` decides where a listed name connects, and isn't in
+  `squid.conf`.
 
 The existing `egress proxy blocked:` summary names what to add. Sessions
 without the flag keep today's `.meta` keys and get no `.conf`.
@@ -259,8 +282,9 @@ Each is a small change, taken when teams ask:
 4. **A multi-tenant suffix guard** refusing `.co.uk`, `.github.io`,
    `.amazonaws.com` and the like as `.suffix` entries.
 5. **A startup report** of entries added since the last allowlist session.
-   `EGRESS_LOG_DIR` is under `$HOME`, which a session on `$HOME` can write, so
-   the report must refuse or warn when that directory lies inside a workspace.
+   `EGRESS_LOG_DIR` defaults to a directory under `$HOME` (`XDG_STATE_HOME`
+   can move it), which a session on `$HOME` can write, so the report must
+   refuse or warn when that directory lies inside a workspace.
 6. **An allow hint** after the denied summary, naming the file used.
 7. **A per-repository file** with host-side hash approval (#100), plus a
    private-range deny for its entries.
@@ -290,12 +314,13 @@ so nobody sells it as a DLP control:
   `Host` header.
 - **Other host-side knobs.** A session that could write the allowlist file, or
   an env file setting `CLAUDE_DOCKER_EGRESS_ALLOWLIST`, `ANTHROPIC_BASE_URL` or
-  `CLAUDE_DOCKER_ADD_HOSTS`, widens a later or concurrent session. Keep them
+  `CLAUDE_DOCKER_ADD_HOSTS`, widens any session that starts after the write. Keep them
   outside every workspace and don't run an allowlist session on `$HOME`; a
   changed `allowlist_sha256` between sessions shows it.
 - **Sidecar policy snippets** (`CLAUDE_DOCKER_GH_POLICY`,
   `CLAUDE_DOCKER_GLAB_POLICY`) can route the sidecar to hosts outside the list,
-  without a squid log entry.
+  without a squid log entry. Their files must lie outside every workspace (D3);
+  their content is the user's responsibility.
 - **Friction.** Every host must be listed, including ones tools fetch at
   runtime. The default without the flag stays open.
 
@@ -304,15 +329,17 @@ so nobody sells it as a DLP control:
 1. Whether plain `--egress-lock` sessions should also save `squid.conf`.
 2. The base requirement "The network is the boundary" states DNS closure
    unconditionally; only `--egress-allowlist` checks it. Whether to scope that
-   sentence is left to the archive of this change (task 6.2).
+   sentence is left to the archive of this change (task 5.2).
 
 ## Appendix A. squid 7.6 behaviour checked during review
 
 Review raised two possible changes to plain `--egress-lock` sessions. Both
-were checked against the squid 7.6 source (`SQUID_7_6`) and the Alpine
-3.24 `squid-7.6-r0` build, and both were dropped from this change so that
-`--egress-lock` stays unchanged. These are source-reading results, not
-runtime tests.
+were checked against the squid 7.6 source
+(<https://github.com/squid-cache/squid/tree/SQUID_7_6>; file paths below are
+relative to it) and the Alpine 3.24 `squid-7.6-r0` build's configure options,
+and both were dropped from this change so that `--egress-lock` stays
+unchanged. These are source-reading results, not runtime tests; tasks 0.x
+turn the behaviour this design relies on into runtime checks.
 
 **An `ANTHROPIC_BASE_URL` host starting with `-`.** The endpoint check
 (`run.sh:420`) accepts it, and the host is written as
