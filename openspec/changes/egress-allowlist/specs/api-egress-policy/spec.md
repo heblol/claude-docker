@@ -103,9 +103,9 @@ Under `--egress-allowlist`, when the auth-proxy sidecar runs for `--gh` or `--gl
 
 #### Scenario: Entries that don't cover GitHub
 
-- **GIVEN** `GH_TOKEN=t` and `$HOME/team.allow` listing `.github.com`, `notgithub.com` and `uploads.github.com`
-- **WHEN** the user runs the same command with `--gh`
-- **THEN** `run.sh` exits 1 naming `github.com` only
+- **GIVEN** `GH_TOKEN=t` and `$HOME/team.allow` listing `.github.io`, `notgithub.com` and `uploads.github.com`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --gh --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
+- **THEN** `run.sh` exits 1 naming `github.com` and `api.github.com` only
 
 #### Scenario: One GitHub host missing
 
@@ -115,7 +115,7 @@ Under `--egress-allowlist`, when the auth-proxy sidecar runs for `--gh` or `--gl
 
 #### Scenario: GitHub covered by a suffix
 
-- **GIVEN** `$HOME/team.allow` lists `github.com` and `.github.com`
+- **GIVEN** `GH_TOKEN` holds a valid token and `$HOME/team.allow` lists `.github.com`
 - **WHEN** an `--api --gh --egress-lock --egress-allowlist=$HOME/team.allow` session clones a repository over HTTPS
 - **THEN** the clone succeeds through the sidecar
 
@@ -362,7 +362,7 @@ An entry outside the grammar, a host whose last label is all digits or `0x` plus
 
 ### Requirement: DNS is closed under --egress-allowlist
 
-Under `--egress-allowlist`, before the egress proxy starts, `run.sh` SHALL check with probe containers that an external name resolves from the session's outbound network and reports not-found from its internal network, each within a time limit. Any other outcome SHALL abort the session, naming DNS. The two probes SHALL have distinct per-session names, be removed by the EXIT trap and be covered by the startup prune.
+Under `--egress-allowlist`, before any sidecar starts, `run.sh` SHALL check with probe containers that an external name resolves from the session's outbound network, and that the internal network's resolver answers it without an address, each within a time limit. Any other outcome SHALL abort the session, naming DNS. The two probes SHALL have distinct per-session names, be removed by the EXIT trap and be covered by the startup prune.
 
 #### Scenario: Engine forwards DNS
 
@@ -378,7 +378,7 @@ Under `--egress-allowlist`, before the egress proxy starts, `run.sh` SHALL check
 
 #### Scenario: Probe times out or can't run
 
-- **GIVEN** the internal probe times out, or exits with a status other than not-found
+- **GIVEN** the internal probe's resolver times out, refuses the connection, or the probe can't run
 - **WHEN** the user starts an `--egress-allowlist` session
 - **THEN** `run.sh` aborts before the proxy starts
 
@@ -390,7 +390,7 @@ Under `--egress-allowlist`, before the egress proxy starts, `run.sh` SHALL check
 
 ### Requirement: Allowlist evidence is saved
 
-Under `--egress-allowlist`, `run.sh` SHALL write the generated squid config to `<start>-<id>.conf` in the evidence directory, owner-only, before the agent container starts. The session's `.meta` SHALL also have `allowlist_file` (the resolved path), `allowlist_sha256` and `allowlist_add_hosts` (the `--add-host` entries given to the proxy).
+Under `--egress-allowlist`, `run.sh` SHALL write the generated squid config to `<start>-<id>.conf` in the evidence directory, owner-only, before the agent container starts, and SHALL exit 1 before the proxy starts, naming the path, when the directory or the file can't be created or written. The session's `.meta` SHALL also have `allowlist_file` (the resolved path), `allowlist_sha256` and `allowlist_add_hosts` (the `--add-host` entries given to the proxy).
 
 #### Scenario: Evidence of the list
 
@@ -401,7 +401,7 @@ Under `--egress-allowlist`, `run.sh` SHALL write the generated squid config to `
 
 #### Scenario: Evidence directory can't be created
 
-- **GIVEN** `XDG_STATE_HOME` points at a read-only directory
+- **GIVEN** `XDG_STATE_HOME` points at a path under a regular file
 - **WHEN** the user starts an `--egress-allowlist=$HOME/team.allow` session
 - **THEN** `run.sh` exits 1 naming the evidence path, and the proxy never starts
 

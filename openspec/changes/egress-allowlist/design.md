@@ -101,9 +101,13 @@ and the sidecar forwards to its upstream regardless of squid's list. Under
   because they point the sidecar at an arbitrary upstream that no entry
   describes.
 
-An exact entry or a covering `.suffix`, with or without a port, counts;
-`.github.com` covers `api.github.com` but not `github.com` itself, and
-`notgithub.com` covers nothing. With the hosts listed, the direct path matches
+An exact entry or a covering `.suffix`, with or without a port, counts. A
+`.suffix` covers the domain itself and every subdomain, as squid's
+`dstdomain` does and as the existing provider check (`run.sh:439`) does:
+`.github.com` covers `github.com` and `api.github.com`; `.github.io` and
+`notgithub.com` cover neither. The checks test whether a token was found
+(`GH_HOST_TOKEN`, `GLAB_HOST_TOKEN`), because the `*_SIDECAR_ACTIVE` flags
+are only set later. With the hosts listed, the direct path matches
 the policy. The upstream checks run in `validate_opts`. The host checks need
 to know whether a sidecar will run and, for `--glab`, the proxied host, which
 `discover_tokens` sets from `GITLAB_HOST` or glab's own discovery; so they run
@@ -239,24 +243,31 @@ On Docker < 26 the engine's embedded resolver still forwards external names
 from an internal network. The lock documents that gap; for the allowlist it
 defeats the purpose, so the session checks it before starting.
 
-After `create_egress_networks` and before `start_egress_sidecar`, so a failure
-never leaves a running proxy, `run.sh` runs two short probes from the agent
+Right after `create_egress_networks`, before `start_auth_sidecar` and
+`start_egress_sidecar`, so a failure never leaves a sidecar running, `run.sh`
+runs two short probes from the agent
 image, with the agent's user and `--cap-drop`, named
 `claude-egress-proxy-<id>-probe-control` and `…-probe-check` so the existing
 stopped-only prune (`^claude-egress-proxy-`) covers them, with `--rm`, and
 both removed by name in the EXIT trap:
 
-1. **Control:** `timeout 10 getent hosts example.org` on the outbound network
-   (`claude-egress-out-<id>`) must succeed. If it doesn't, DNS is unavailable
-   and the internal result would prove nothing, so the session aborts.
-2. **Check:** the same lookup on the internal network must report not-found
-   (`getent` exit 2). A resolved name, a timeout (exit 124) or a probe that
-   can't run aborts the session. Task 0.5 is a gate: if it shows that `getent`
-   also exits 2 when the resolver times out, the check must tell the two apart
-   (for example by elapsed time) before this rule is implemented.
+The probe is a short `node -e` script (Node ships in the image for Claude
+Code; `getent` can't tell a timeout from not-found, and there is no `dig`).
+It queries `example.org` with `dns.promises.Resolver` against the container's
+own resolver, one try, a 3-second timeout, and prints the address or the
+error code.
 
-`timeout` runs inside the container (`--entrypoint timeout`), because macOS has
-no `timeout` on the host.
+1. **Control,** on the outbound network (`claude-egress-out-<id>`): it must
+   return an address. Otherwise DNS is unavailable and the internal result
+   would prove nothing, so the session aborts as inconclusive.
+2. **Check,** on the internal network: it must return a code showing that the
+   resolver answered without an address. Task 0.5 records which code Docker ≥
+   26 returns (expected `ENOTFOUND` or `EREFUSED`), and only those pass. An
+   address, `ETIMEOUT`, `ECONNREFUSED`, any other code, or a probe that can't
+   run aborts the session. This doesn't depend on timing.
+
+The resolver timeout is inside the script, because macOS has no `timeout`
+on the host.
 
 ### D8. Evidence
 
@@ -273,9 +284,12 @@ Under `--egress-allowlist`, and only then:
   `egress_save_log` warns and continues.
 - `.meta` gains `allowlist_file` (the resolved path), `allowlist_sha256` and
   `allowlist_add_hosts` (the `--add-host` entries given to squid, from
-  `CLAUDE_DOCKER_ADD_HOSTS` and the sidecars), from globals set at startup:
-  the add-host list is built in a local array in `start_egress_sidecar`, so it
-  is copied to a global (`egress_add_hosts`) before that function returns.
+  `CLAUDE_DOCKER_ADD_HOSTS` and the sidecars), from globals set at startup.
+  The add-host list is built in a local array in `start_egress_sidecar`, so
+  it is copied to the global `egress_add_hosts`, initialised to `()` with the
+  other egress globals, right after the add-host loop and before the proxy's
+  `run -d` and `egress_started`. Every later failure exit then still leaves
+  the trap a defined value, read with the `${arr[@]+…}` guard for `set -u`.
   `--add-host` decides where a listed name connects, and isn't in
   `squid.conf`.
 
@@ -353,8 +367,8 @@ were checked against the squid 7.6 source
 relative to it) and the Alpine 3.24 `squid-7.6-r0` build's configure options,
 and both were dropped from this change so that `--egress-lock` stays
 unchanged. These are source-reading results from 2026-10-29, not runtime
-tests; tasks 0.1-0.5 check the behaviour this design relies on, and task 0.6
-checks the two findings below.
+tests; tasks 0.1-0.5 and 0.7 check the behaviour this design relies on, and
+task 0.6 checks the two findings below, for plain HTTP and `CONNECT`.
 
 **An `ANTHROPIC_BASE_URL` host starting with `-`.** The endpoint check
 (`run.sh:420`) accepts it, and the host is written as
