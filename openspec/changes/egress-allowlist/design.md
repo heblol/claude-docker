@@ -31,7 +31,7 @@ established knob.
   the hosts in the allowlist file, by any client (except routes the user adds
   in a sidecar policy snippet, see Risks), and its own list can't be changed
   from inside the session.
-- Unlisted names aren't resolved, by squid or by the engine's DNS.
+- Names off the effective allowlist aren't resolved, by squid or by the engine's DNS.
 - The saved evidence shows which rules ran and which file they came from.
 - Sessions without the flag are unchanged, down to the generated squid
   config and the `.meta` keys.
@@ -86,7 +86,9 @@ Credential flags (`--gh`, `--gh-direct`, `--glab`, `--glab-direct`, `--tfe`,
 session may reach; a flag whose hosts aren't listed fails, and the denied
 summary names them.
 
-`--gh` and `--glab` need one more rule. Their auth-proxy sidecar is on the
+`--gh` and `--glab` need one more rule when their auth-proxy sidecar is
+active, that is, when a token was found (without one there is no sidecar, and
+their traffic goes through squid like any other). The sidecar is on the
 agent's internal network and the agent's `/etc/hosts` maps the hosts it serves
 to it, so a client that ignores the proxy env reaches the sidecar directly,
 and the sidecar forwards to its upstream regardless of squid's list. Under
@@ -102,10 +104,11 @@ and the sidecar forwards to its upstream regardless of squid's list. Under
 An exact entry or a covering `.suffix`, with or without a port, counts;
 `.github.com` covers `api.github.com` but not `github.com` itself, and
 `notgithub.com` covers nothing. With the hosts listed, the direct path matches
-the policy. The `--gh` and upstream checks run in `validate_opts`. The
-`--glab` check needs the proxied host, which `discover_tokens` sets from
-`GITLAB_HOST` or glab's own discovery, so it runs after discovery and before
-`create_egress_networks`, still before any container resource exists.
+the policy. The upstream checks run in `validate_opts`. The host checks need
+to know whether a sidecar will run and, for `--glab`, the proxied host, which
+`discover_tokens` sets from `GITLAB_HOST` or glab's own discovery; so they run
+after discovery and before `create_egress_networks`, still before any
+container resource exists.
 
 `CLAUDE_DOCKER_GH_POLICY` and `CLAUDE_DOCKER_GLAB_POLICY` snippets can add
 routes inside the sidecar. Under `--egress-allowlist` their files get the same
@@ -116,8 +119,8 @@ endpoint.
 
 ### D4. Reading the file safely
 
-All checks run in `validate_opts`, before runtime detection, so they are
-testable without an engine.
+All checks except the sidecar host checks (D3) run in `validate_opts`,
+before runtime detection, so they are testable without an engine.
 
 1. **Resolve the file itself.** Follow the path's own symlink chain with a
    `readlink` loop of at most 40 links (relative targets against the link's
@@ -156,8 +159,9 @@ pypi.org                      exact host           # trailing comments too
 git.corp.example:8443         host or .suffix with a port
 ```
 
-A trailing CR, leading and trailing spaces and tabs, and a trailing
-` # comment` are stripped; whitespace inside an entry is invalid. The entry is
+A trailing CR is stripped, then everything from the first `#`, then
+leading and trailing spaces and tabs; any space, tab or CR left inside the
+entry makes it invalid. The entry is
 lowercased before it is checked, so every check is case-insensitive. Every
 entry is checked before any container resource exists:
 
@@ -204,6 +208,9 @@ Under `--egress-allowlist`:
 Without `--egress-allowlist`, the generated config is byte-identical to
 today's.
 
+- The `--glab` pair is the existing `egress_auth_proxy_glab` /
+  `egress_auth_proxy_glab_port`, from the port in the proxied host
+  (`GLAB_PROXY_HOST`); with no port there is no pair.
 - `egress_allowed_names` (`dstdomain -n`) holds every name on the effective
   allowlist. An entry with a port therefore also reaches its host on 80/443:
   a port adds to 80/443, it doesn't replace them. Per-entry port pairs are
@@ -244,7 +251,9 @@ both removed by name in the EXIT trap:
    and the internal result would prove nothing, so the session aborts.
 2. **Check:** the same lookup on the internal network must report not-found
    (`getent` exit 2). A resolved name, a timeout (exit 124) or a probe that
-   can't run aborts the session.
+   can't run aborts the session. Task 0.5 is a gate: if it shows that `getent`
+   also exits 2 when the resolver times out, the check must tell the two apart
+   (for example by elapsed time) before this rule is implemented.
 
 `timeout` runs inside the container (`--entrypoint timeout`), because macOS has
 no `timeout` on the host.
@@ -258,10 +267,15 @@ Under `--egress-allowlist`, and only then:
   (`mkdir -p`, mode 700, as `egress_save_log` does), and writes the same file
   that is mounted into squid to `<start>-<id>.conf` there under `umask 077`.
   The EXIT trap removes the stage directory before it saves the log, so the
-  stage copy can't be used at teardown.
+  stage copy can't be used at teardown. If the directory or the file can't be
+  created or written, `run.sh` exits 1 before the proxy starts, naming the
+  path, like the other startup steps; only the teardown copy in
+  `egress_save_log` warns and continues.
 - `.meta` gains `allowlist_file` (the resolved path), `allowlist_sha256` and
   `allowlist_add_hosts` (the `--add-host` entries given to squid, from
-  `CLAUDE_DOCKER_ADD_HOSTS` and the sidecars), from variables set at startup.
+  `CLAUDE_DOCKER_ADD_HOSTS` and the sidecars), from globals set at startup:
+  the add-host list is built in a local array in `start_egress_sidecar`, so it
+  is copied to a global (`egress_add_hosts`) before that function returns.
   `--add-host` decides where a listed name connects, and isn't in
   `squid.conf`.
 
@@ -338,8 +352,9 @@ were checked against the squid 7.6 source
 (<https://github.com/squid-cache/squid/tree/SQUID_7_6>; file paths below are
 relative to it) and the Alpine 3.24 `squid-7.6-r0` build's configure options,
 and both were dropped from this change so that `--egress-lock` stays
-unchanged. These are source-reading results, not runtime tests; tasks 0.x
-turn the behaviour this design relies on into runtime checks.
+unchanged. These are source-reading results from 2026-10-29, not runtime
+tests; tasks 0.1-0.5 check the behaviour this design relies on, and task 0.6
+checks the two findings below.
 
 **An `ANTHROPIC_BASE_URL` host starting with `-`.** The endpoint check
 (`run.sh:420`) accepts it, and the host is written as

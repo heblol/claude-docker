@@ -93,23 +93,23 @@ Under `--egress-allowlist`, no credential flag SHALL add a host to the effective
 
 ### Requirement: --gh and --glab need their sidecar's hosts in the file
 
-Under `--egress-allowlist`, `run.sh` SHALL exit 1 before creating any container resource, naming the missing hosts, when `--gh` is passed and any of `github.com`, `api.github.com` and `uploads.github.com` is not covered by an entry, or when `--glab` is passed and the proxied GitLab host is not covered by an entry. An exact entry or a covering `.suffix`, with or without a port, SHALL count.
+Under `--egress-allowlist`, when the auth-proxy sidecar runs for `--gh` or `--glab` (a token was found), `run.sh` SHALL exit 1 before creating any container resource, naming the missing hosts, if any of `github.com`, `api.github.com` and `uploads.github.com`, or the proxied GitLab host, is not covered by an entry. An exact entry or a covering `.suffix`, with or without a port, SHALL count.
 
 #### Scenario: GitLab host missing
 
-- **GIVEN** `GITLAB_HOST=gitlab.corp.example` and an empty `$HOME/team.allow`
+- **GIVEN** `GITLAB_TOKEN=t`, `GITLAB_HOST=gitlab.corp.example` and an empty `$HOME/team.allow`
 - **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --glab --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
 - **THEN** `run.sh` exits 1 naming `gitlab.corp.example`, and no container starts
 
 #### Scenario: Entries that don't cover GitHub
 
-- **GIVEN** `$HOME/team.allow` lists `.github.com`, `notgithub.com` and `uploads.github.com`
+- **GIVEN** `GH_TOKEN=t` and `$HOME/team.allow` listing `.github.com`, `notgithub.com` and `uploads.github.com`
 - **WHEN** the user runs the same command with `--gh`
 - **THEN** `run.sh` exits 1 naming `github.com` only
 
 #### Scenario: One GitHub host missing
 
-- **GIVEN** `$HOME/team.allow` lists `github.com` and `api.github.com`
+- **GIVEN** `GH_TOKEN=t` and `$HOME/team.allow` listing `github.com` and `api.github.com`
 - **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --gh --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
 - **THEN** `run.sh` exits 1 naming `uploads.github.com` only
 
@@ -121,7 +121,7 @@ Under `--egress-allowlist`, `run.sh` SHALL exit 1 before creating any container 
 
 #### Scenario: GitLab host on its own port
 
-- **GIVEN** `GITLAB_HOST=gitlab.corp.example:8443` and `$HOME/team.allow` listing `.corp.example`
+- **GIVEN** `GITLAB_TOKEN=t`, `GITLAB_HOST=gitlab.corp.example:8443` and `$HOME/team.allow` listing `.corp.example`
 - **WHEN** a `--api --glab --egress-lock --egress-allowlist=$HOME/team.allow` session requests `https://gitlab.corp.example:8443/`
 - **THEN** it is allowed, and `https://gitlab.corp.example:9443/` is refused
 
@@ -312,6 +312,12 @@ Every allowlist entry SHALL be a hostname or a `.suffix` of at least two labels,
 - **WHEN** `run.sh` generates the squid config
 - **THEN** `egress_allowed_names` contains `.example.com` and `pypi.org` once each and not `api.example.com`, and the proxy image's `squid -k parse` reports no warning
 
+#### Scenario: Comment without a space
+
+- **GIVEN** `$HOME/team.allow` with the lines `pypi.org#index` and `example.org<TAB>#c`
+- **WHEN** `run.sh` generates the squid config
+- **THEN** `egress_allowed_names` contains `pypi.org` and `example.org`
+
 #### Scenario: Boundary values
 
 - **GIVEN** `$HOME/team.allow` lists a 253-character host made of labels of 63, 63, 63 and 61 characters, `a.example:1` and `b.example:65535`
@@ -336,7 +342,7 @@ An entry outside the grammar, a host whose last label is all digits or `0x` plus
 
 #### Scenario: Invalid hosts and ports
 
-- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME/team.allow ~/repo` with a file whose only line is, in turn, `-a.example.com`, `a-.example.com`, `a..example.com`, `a_b.example.com`, `example.com.`, a 254-character name, a name with a 64-character label, `.com`, `example.com:`, `example.com:0`, `example.com:65536`, `example.com:http`, `https://example.com`, `example.com/x` and `example.com all`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME/team.allow ~/repo` with a file whose only line is, in turn, `-a.example.com`, `a-.example.com`, `a..example.com`, `a_b.example.com`, `example.com.`, a 254-character name, a name with a 64-character label, `.com`, `example.com:`, `example.com:0`, `example.com:65536`, `example.com:http`, `https://example.com`, `example.com/x`, `example.com all`, `example.com<TAB>all` and `example.com<CR>x`
 - **THEN** `run.sh` exits 1 each time, naming the file and line, and no rejected text reaches the generated config
 
 #### Scenario: Addresses
@@ -392,6 +398,12 @@ Under `--egress-allowlist`, `run.sh` SHALL write the generated squid config to `
 - **WHEN** an `--egress-allowlist=$HOME/team.allow` session exits
 - **THEN** the `.meta` has `allowlist_file=/etc/team/allow`, its SHA-256 and `allowlist_add_hosts=` containing `git.corp.example:10.0.0.5`
 - **AND** the `.conf` next to it, mode 600, is the config the proxy ran with
+
+#### Scenario: Evidence directory can't be created
+
+- **GIVEN** `XDG_STATE_HOME` points at a read-only directory
+- **WHEN** the user starts an `--egress-allowlist=$HOME/team.allow` session
+- **THEN** `run.sh` exits 1 naming the evidence path, and the proxy never starts
 
 #### Scenario: Evidence survives a failed log copy
 

@@ -10,7 +10,7 @@ The teams that use `--egress-lock` mostly have a stricter requirement: all traff
 - **The file is the only source.** Under the flag the proxy denies everything except the model endpoint (and the auth-proxy names that only forward there or that the user listed) and the file's entries. Credential flags add nothing.
 - Entries are a host or a `.suffix`, with an optional `:port`, and are strictly validated.
 - The file must lie outside every workspace, and is read once and hashed.
-- Unlisted names are never resolved, and a probe checks that the engine doesn't forward DNS from the internal network.
+- Names off the effective allowlist are never resolved, and a probe checks that the engine doesn't forward DNS from the internal network.
 - The generated `squid.conf` and the file's path and hash are saved as evidence.
 - Sessions without the flag are unchanged.
 
