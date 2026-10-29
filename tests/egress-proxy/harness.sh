@@ -22,6 +22,8 @@
 #
 # Usage: bash tests/egress-proxy/harness.sh   (docker on PATH)
 # Env: CLAUDE_DOCKER_EGRESS_PROXY_IMAGE to use a prebuilt squid image.
+# Globals set here are read by the sourced run.sh functions (SC2034).
+# shellcheck disable=SC2034
 
 set -euo pipefail
 
