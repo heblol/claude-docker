@@ -144,9 +144,10 @@ before runtime detection, so they are testable without an engine.
    exist yet when `validate_opts` runs, so there is no disk copy. `run.sh`
    reads the resolved file once with `content=$(cat -- "$f"; printf x)` and
    strips the `x`, which keeps trailing newlines. Under `LC_ALL=C`, the
-   length of `content` must equal `wc -c` of the file; a mismatch means NUL
-   bytes (which bash drops) or a file that changed during the read, and is
-   refused. Control bytes other than CR, LF and TAB are refused too. The hash
+   length of `content` must equal `wc -c` of the file, a best-effort guard
+   against NUL bytes (which bash drops): `wc` opens the file again, so it
+   doesn't prove the file was unchanged, but the hashed and parsed bytes are
+   the same either way. A mismatch is refused. Control bytes other than CR, LF and TAB are refused too. The hash
    is `printf '%s' "$content"` piped to `sha256sum`, else `shasum -a 256`;
    with neither tool, `--egress-allowlist` refuses to start. Parsing reads the
    same variable, including a last line without a newline
@@ -254,7 +255,10 @@ runs two short probes from the agent
 image, with the agent's user and `--cap-drop`, named
 `claude-egress-proxy-<id>-probe-control` and `…-probe-check` so the existing
 stopped-only prune (`^claude-egress-proxy-`) covers them, with `--rm`, and
-both removed by name in the EXIT trap:
+both removed by name in the EXIT trap with
+`rm -f <name> >/dev/null 2>&1 || true`, like the trap's other removals (with
+`--rm` they are normally gone already, and an unguarded `rm` would stop the
+trap under `set -e`):
 
 The probe is a short `node -e` script (Node ships in the image for Claude
 Code; `getent` can't tell a timeout from not-found, and there is no `dig`).
