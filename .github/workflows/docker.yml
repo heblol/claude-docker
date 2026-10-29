@@ -133,6 +133,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: $/.github/workflows/homebrew.yml
+    uses: ./.github/workflows/homebrew.yml
     with:
       tag: ${{ github.ref_name }}
