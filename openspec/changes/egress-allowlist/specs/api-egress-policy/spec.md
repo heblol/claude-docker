@@ -2,354 +2,358 @@
 
 ## ADDED Requirements
 
-### Requirement: --egress-allowlist needs --egress-lock
+### Requirement: --egress-allowlist needs --egress-lock and a file
 
-`--egress-allowlist` and `--egress-allowlist=FILE` SHALL turn on the allowlist mode of the egress proxy. Without `--egress-lock`, `run.sh` SHALL exit 1 before creating any container resource. `--egress-allow=ENTRY` without `--egress-allowlist`, or with an empty value, SHALL also exit 1. Without `--egress-allowlist`, `CLAUDE_DOCKER_EGRESS_ALLOWLIST` SHALL NOT be read or checked, and the session SHALL be unaffected.
+`--egress-allowlist` SHALL turn on the allowlist mode of the egress proxy. Without `--egress-lock`, `run.sh` SHALL exit 1 before creating any container resource. With `--egress-lock`, it SHALL exit 1 before creating any container resource when neither `--egress-allowlist=FILE` nor `CLAUDE_DOCKER_EGRESS_ALLOWLIST` names a file.
 
 #### Scenario: Allowlist without the lock
 
-- **WHEN** the user runs `claude-docker --api --egress-allowlist ~/repo`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-allowlist=$HOME/team.allow ~/repo`
 - **THEN** `run.sh` exits 1 with `--egress-allowlist needs --egress-lock`, and no container starts
 
-#### Scenario: Entry without the allowlist
+#### Scenario: No file named
 
-- **WHEN** the user runs `claude-docker --api --egress-lock --egress-allow=pypi.org ~/repo`
-- **THEN** `run.sh` exits 1 with `--egress-allow needs --egress-allowlist`, and no container starts
+- **GIVEN** `CLAUDE_DOCKER_EGRESS_ALLOWLIST` is unset
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist ~/repo`
+- **THEN** `run.sh` exits 1 with `--egress-allowlist needs a file`, and no container starts
 
-#### Scenario: Empty entry
+#### Scenario: File given with a space
 
-- **WHEN** the user passes `--egress-allow=` with `--egress-allowlist`
-- **THEN** `run.sh` exits 1, and no container starts
-
-#### Scenario: The lock alone ignores the env var
-
-- **GIVEN** `CLAUDE_DOCKER_EGRESS_ALLOWLIST=/nonexistent`
-- **WHEN** an `--api --egress-lock` session without `--egress-allowlist` requests `https://example.org/` through the proxy
-- **THEN** the session starts and the request succeeds
-
-#### Scenario: The lock alone generates the same config
-
-- **WHEN** `run.sh` generates the squid config for an `--egress-lock` session without `--egress-allowlist`
-- **THEN** it is byte-identical to the config generated before this change
-- **AND** the saved `.meta` has the same keys as before this change, and no `.conf` file is saved
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist $HOME/team.allow ~/repo`
+- **THEN** `run.sh` exits 1 and suggests `--egress-allowlist=FILE`
 
 #### Scenario: With --api-direct
 
-- **WHEN** the user runs `claude-docker --api-direct --egress-lock --egress-allowlist ~/repo`
-- **THEN** the session starts in allowlist mode
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api-direct --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
+- **THEN** the generated squid config ends in `http_access deny all`
 
-### Requirement: Under --egress-allowlist, unlisted destinations are refused
+### Requirement: Sessions without --egress-allowlist are unchanged
 
-Under `--egress-allowlist`, the proxy's last rule SHALL deny every request. Before it, the proxy SHALL allow only the `ANTHROPIC_BASE_URL` endpoint, the `--api` sidecar's model-proxy name, and the listed entries. No credential flag SHALL add a host. The metadata, link-local, loopback, provider-host and port denies SHALL come before every allow. A private-range destination SHALL be reachable only through a listed name.
+Without `--egress-allowlist`, `run.sh` SHALL NOT read `CLAUDE_DOCKER_EGRESS_ALLOWLIST`, SHALL generate the same squid config as before this change, and SHALL save the same `.meta` keys and no `.conf` file.
+
+#### Scenario: Same config as before
+
+- **WHEN** `run.sh` generates the squid config for `--api --egress-lock`, `--api --egress-lock` with an endpoint port, and `--api --glab --egress-lock`
+- **THEN** each is byte-identical to a fixture generated from the commit before this change
+
+#### Scenario: Env var ignored
+
+- **GIVEN** `CLAUDE_DOCKER_EGRESS_ALLOWLIST=/nonexistent`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock ~/repo`
+- **THEN** no error mentions the allowlist, and the session's `.meta` has the same keys as before this change
+
+### Requirement: Only the effective allowlist is allowed
+
+Under `--egress-allowlist`, the proxy SHALL refuse every request whose destination is not on the effective allowlist: the `ANTHROPIC_BASE_URL` endpoint; under `--api`, `claude-docker-api-proxy` on 8080; under `--glab`, the GitLab host's own port as the composition requirement allows; and the allowlist file's entries. A private-range destination SHALL be reachable only through a name on the effective allowlist or the endpoint.
 
 #### Scenario: Listed and unlisted hosts
 
-- **GIVEN** an `--api --egress-lock --egress-allowlist --egress-allow=example.com` session
-- **WHEN** the agent requests `https://example.com/` and `https://example.org/` through the proxy
-- **THEN** the first succeeds and the proxy answers `CONNECT example.org:443` with 403
+- **GIVEN** `$HOME/team.allow` lists `example.com`
+- **WHEN** a `--egress-allowlist=$HOME/team.allow` session requests `https://example.com/`, `https://example.org/` and `http://example.org/` through the proxy
+- **THEN** the first is allowed and the other two are refused
 
-#### Scenario: Plain HTTP to an unlisted host
+#### Scenario: Endpoint with an empty file
 
-- **GIVEN** an `--egress-allowlist` session that doesn't list `example.org`
-- **WHEN** the agent requests `http://example.org/` through the proxy
-- **THEN** the proxy answers 403
-
-#### Scenario: Endpoint without any list
-
-- **GIVEN** an `--api --egress-lock --egress-allowlist` session with no allowlist file and no `--egress-allow`, and `ANTHROPIC_BASE_URL=https://gw.example.eu:8443`
-- **WHEN** Claude Code sends a model request
-- **THEN** it reaches the endpoint
+- **GIVEN** `ANTHROPIC_BASE_URL=https://gw.example.eu:8443` and an empty `$HOME/team.allow`
+- **WHEN** a `--api --egress-lock --egress-allowlist=$HOME/team.allow` session sends `CONNECT gw.example.eu:8443` through the proxy
+- **THEN** it is allowed
 
 #### Scenario: Sidecar name on another port
 
-- **GIVEN** an `--api --egress-lock --egress-allowlist` session
-- **WHEN** a request for `http://claude-docker-api-proxy:9999/` is sent through the proxy
-- **THEN** the proxy answers 403
-
-#### Scenario: Credential flag adds nothing
-
-- **GIVEN** an `--api --tfe --egress-lock --egress-allowlist` session with no entries
-- **WHEN** the agent requests `https://app.terraform.io/`
-- **THEN** the proxy answers 403
-
-#### Scenario: Provider host in another spelling
-
-- **GIVEN** an `--egress-allowlist` session
-- **WHEN** requests for `https://API.Anthropic.com/` and `https://api.anthropic.com./` are sent through the proxy
-- **THEN** the proxy answers both with 403
+- **WHEN** a `--api --egress-lock --egress-allowlist=$HOME/team.allow` session requests `http://claude-docker-api-proxy:9999/`
+- **THEN** it is refused
 
 #### Scenario: IP-literal requests
 
-- **GIVEN** an `--egress-allowlist` session
-- **WHEN** requests for `http://10.0.0.5/`, `http://2130706433/` and `http://[2001:db8::1]/` are sent through the proxy
-- **THEN** the proxy answers each with 403
+- **WHEN** an `--egress-allowlist` session requests `http://10.0.0.5/`, `http://2130706433/` and `http://[2001:db8::1]/`
+- **THEN** each is refused
 
 #### Scenario: Listed on-prem name
 
-- **GIVEN** an `--egress-allowlist` session listing `git.internal.example`, which resolves to `10.20.1.2`
-- **WHEN** a request for `https://git.internal.example/` is sent through the proxy
+- **GIVEN** `$HOME/team.allow` lists `git.corp.example`, which resolves to `10.20.1.2`
+- **WHEN** the session requests `https://git.corp.example/`
+- **THEN** it is allowed, and the access log shows a connect attempt to `10.20.1.2`
+
+### Requirement: Credential flags add no hosts
+
+Under `--egress-allowlist`, no credential flag SHALL add a host to the effective allowlist.
+
+#### Scenario: --tfe without its host listed
+
+- **GIVEN** an empty `$HOME/team.allow`
+- **WHEN** a `--api --tfe --egress-lock --egress-allowlist=$HOME/team.allow` session requests `https://app.terraform.io/`
+- **THEN** it is refused
+
+#### Scenario: --gh-direct without GitHub listed
+
+- **GIVEN** an empty `$HOME/team.allow`
+- **WHEN** a `--api --gh-direct --egress-lock --egress-allowlist=$HOME/team.allow` session requests `https://github.com/`
+- **THEN** it is refused
+
+### Requirement: --gh and --glab need their sidecar's hosts in the file
+
+Under `--egress-allowlist`, `run.sh` SHALL exit 1 before creating any container resource, naming the missing hosts, when `--gh` is passed and any of `github.com`, `api.github.com` and `uploads.github.com` is not covered by an entry, or when `--glab` is passed and the proxied GitLab host is not covered by an entry. An exact entry or a covering `.suffix`, with or without a port, SHALL count.
+
+#### Scenario: One GitHub host missing
+
+- **GIVEN** `$HOME/team.allow` lists `github.com` and `api.github.com`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --gh --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
+- **THEN** `run.sh` exits 1 naming `uploads.github.com` only
+
+#### Scenario: GitHub covered by a suffix
+
+- **GIVEN** `$HOME/team.allow` lists `github.com` and `.github.com`
+- **WHEN** an `--api --gh --egress-lock --egress-allowlist=$HOME/team.allow` session clones a repository over HTTPS
+- **THEN** the clone succeeds through the sidecar
+
+#### Scenario: GitLab host on its own port
+
+- **GIVEN** `GITLAB_HOST=gitlab.corp.example:8443` and `$HOME/team.allow` listing `.corp.example`
+- **WHEN** a `--api --glab --egress-lock --egress-allowlist=$HOME/team.allow` session requests `https://gitlab.corp.example:8443/`
 - **THEN** it is allowed
+
+### Requirement: Sidecar upstream overrides are refused
+
+Under `--egress-allowlist`, `run.sh` SHALL exit 1 before creating any container resource when `CLAUDE_DOCKER_GH_UPSTREAM` or `CLAUDE_DOCKER_GLAB_UPSTREAM` is set.
+
+#### Scenario: GitHub upstream override
+
+- **GIVEN** `CLAUDE_DOCKER_GH_UPSTREAM=https://other.example` and `$HOME/team.allow` listing the GitHub hosts
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --gh --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
+- **THEN** `run.sh` exits 1 naming `CLAUDE_DOCKER_GH_UPSTREAM`
+
+### Requirement: Allowlist rule order
+
+Under `--egress-allowlist`, the proxy's rules SHALL be in this order: the cache-manager deny; the metadata-name deny; a deny of every name not on the effective allowlist; the metadata, link-local and loopback address denies; the provider-host deny; the allows for the endpoint, sidecar and entry ports; the port denies; the allow of the effective allowlist's names; and a final deny of everything.
+
+#### Scenario: Provider host in another spelling
+
+- **WHEN** an `--egress-allowlist` session requests `https://API.Anthropic.com/` and `https://api.anthropic.com./`
+- **THEN** both are refused
 
 #### Scenario: Listed name resolving to metadata
 
-- **GIVEN** an `--egress-allowlist` session listing a name that resolves to `169.254.169.254`
-- **WHEN** a request for that name is sent through the proxy
-- **THEN** the proxy answers 403
+- **GIVEN** `$HOME/team.allow` lists a name that resolves to `169.254.169.254`
+- **WHEN** the session requests that name
+- **THEN** it is refused
 
-### Requirement: --gh and --glab need their sidecar's hosts listed
+#### Scenario: Loopback with a port
 
-Under `--egress-allowlist`, `run.sh` SHALL exit 1 before creating any container resource when `--gh` is passed and any of `github.com`, `api.github.com` or `uploads.github.com` is not covered by an entry, or when `--glab` is passed and the proxied GitLab host is not covered by an entry, naming the missing hosts. An exact entry or a covering `.suffix`, with or without a port, SHALL count.
+- **GIVEN** `$HOME/team.allow` lists `localhost:8080`
+- **WHEN** the session requests `http://localhost:8080/`
+- **THEN** it is refused
 
-#### Scenario: --gh without GitHub hosts
+### Requirement: Unlisted names are not resolved
 
-- **WHEN** the user runs `claude-docker --api --gh --egress-lock --egress-allowlist ~/repo` with no entries
-- **THEN** `run.sh` exits 1 naming `github.com`, `api.github.com` and `uploads.github.com`, and no container starts
+Under `--egress-allowlist`, the proxy SHALL send no DNS query, forward or reverse, for a request whose host is not a name on the effective allowlist.
 
-#### Scenario: --gh with GitHub hosts listed
+#### Scenario: Secret in an unlisted name
 
-- **GIVEN** entries `github.com`, `api.github.com`, `uploads.github.com` and `codeload.github.com`
-- **WHEN** an `--api --gh --egress-lock --egress-allowlist` session clones a repository over HTTPS
-- **THEN** the clone succeeds through the sidecar
-
-#### Scenario: --glab with a suffix entry
-
-- **GIVEN** `--glab` for `gitlab.internal.example:8443` and the entry `.internal.example`
-- **WHEN** the user starts an `--egress-allowlist` session
-- **THEN** the session starts
-
-#### Scenario: --gh-direct needs no check
-
-- **WHEN** the user runs `claude-docker --api --gh-direct --egress-lock --egress-allowlist ~/repo` with no entries
-- **THEN** the session starts, and requests to `https://github.com/` are answered with 403
+- **WHEN** an `--egress-allowlist` session requests `https://secret.attacker.example/`, `http://SECRET.attacker.example/`, `https://1.2.3.4.secret.attacker.example/` and `http://10.0.0.5/`
+- **THEN** each is refused, and the proxy's resolver receives no query for any of them
 
 ### Requirement: Allowlist ports
 
-Under `--egress-allowlist`, a host or `.suffix` entry with `:port` SHALL make that port reachable for that entry only, in addition to 80 and 443. Every other destination SHALL stay on 80 and 443, with `CONNECT` only to 443.
+Under `--egress-allowlist`, an entry with `:port` SHALL make that port reachable for the names the entry covers, in addition to 80 and 443. Every other destination on the effective allowlist SHALL stay on 80 and 443, with `CONNECT` only to 443.
 
 #### Scenario: Listed host on its own port
 
-- **GIVEN** an `--egress-allowlist` session with `--egress-allow=git.example.com:8443`
-- **WHEN** the agent requests `https://git.example.com:8443/`, `https://git.example.com/` and `https://example.com:8443/` through the proxy
-- **THEN** the first two are allowed and the proxy answers `CONNECT example.com:8443` with 403
+- **GIVEN** `$HOME/team.allow` lists `git.corp.example:8443`
+- **WHEN** the session requests `https://git.corp.example:8443/`, `https://git.corp.example/`, `https://git.corp.example:9443/` and `https://example.com:8443/`
+- **THEN** the first two are allowed and the last two are refused
 
 #### Scenario: Suffix with a port
 
-- **GIVEN** an `--egress-allowlist` session with `--egress-allow=.internal.example:8443`
-- **WHEN** the agent requests `https://git.internal.example:8443/` and `https://git.internal.example:9443/`
-- **THEN** the first is allowed and the proxy answers the second with 403
+- **GIVEN** `$HOME/team.allow` lists `.corp.example:8443`
+- **WHEN** the session requests `https://git.corp.example:8443/` and `https://git.corp.example:9443/`
+- **THEN** the first is allowed and the second is refused
 
-#### Scenario: Loopback listed with a port
+### Requirement: Allowlist file selection
 
-- **GIVEN** an `--egress-allowlist` session with `--egress-allow=localhost:8080`
-- **WHEN** a request for `http://localhost:8080/` is sent through the proxy
-- **THEN** the proxy answers 403
-
-### Requirement: Allowlist sources
-
-The effective allowlist SHALL be the union of the endpoint and the `--api` sidecar name, at most one allowlist file and every `--egress-allow=ENTRY`. The file SHALL be `FILE` from `--egress-allowlist=FILE`, else the path in `CLAUDE_DOCKER_EGRESS_ALLOWLIST`, else none. A leading `~/` in either SHALL be expanded to `$HOME/`. No other file SHALL be read.
+The allowlist file SHALL be `FILE` from `--egress-allowlist=FILE`, else the path in `CLAUDE_DOCKER_EGRESS_ALLOWLIST`. A leading `~/` in either SHALL be expanded to `$HOME/`. No other file SHALL be read.
 
 #### Scenario: File from the env var
 
-- **GIVEN** `CLAUDE_DOCKER_EGRESS_ALLOWLIST=$HOME/team.allow` listing `pypi.org`
-- **WHEN** an `--egress-allowlist` session requests `https://pypi.org/`
-- **THEN** the request succeeds
+- **GIVEN** `CLAUDE_DOCKER_EGRESS_ALLOWLIST=$HOME/team.allow`, listing `pypi.org`
+- **WHEN** `run.sh` generates the squid config for `--api --egress-lock --egress-allowlist`
+- **THEN** `egress_allowed_names` contains `pypi.org`
 
 #### Scenario: Flag file wins
 
 - **GIVEN** `CLAUDE_DOCKER_EGRESS_ALLOWLIST` names a file listing `pypi.org`, and `$HOME/other.allow` lists `example.com`
-- **WHEN** an `--egress-allowlist=$HOME/other.allow` session requests `https://pypi.org/`
-- **THEN** the proxy answers 403
-
-#### Scenario: File and flags combine
-
-- **GIVEN** `$HOME/team.allow` listing `pypi.org`
-- **WHEN** an `--egress-allowlist=$HOME/team.allow --egress-allow=example.com` session requests `https://pypi.org/` and `https://example.com/`
-- **THEN** both succeed
+- **WHEN** `run.sh` generates the squid config for `--egress-allowlist=$HOME/other.allow`
+- **THEN** `egress_allowed_names` contains `example.com` and not `pypi.org`
 
 #### Scenario: Tilde in the flag value
 
-- **GIVEN** `$HOME/team.allow` listing `pypi.org`
 - **WHEN** the user passes `--egress-allowlist=~/team.allow` with the `~` unexpanded by the shell
 - **THEN** `run.sh` reads `$HOME/team.allow`
 
 #### Scenario: No fixed fallback file
 
-- **GIVEN** no flag file, no `CLAUDE_DOCKER_EGRESS_ALLOWLIST`, and `$XDG_CONFIG_HOME/claude-docker/egress-allowlist` listing `pypi.org`
-- **WHEN** an `--egress-allowlist` session requests `https://pypi.org/`
-- **THEN** the proxy answers 403
+- **GIVEN** `$XDG_CONFIG_HOME/claude-docker/egress-allowlist` exists and `CLAUDE_DOCKER_EGRESS_ALLOWLIST` is unset
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist ~/repo`
+- **THEN** `run.sh` exits 1 with `--egress-allowlist needs a file`
 
-### Requirement: The allowlist file is out of the agent's reach
+### Requirement: The allowlist file is read once
 
-A path given by `--egress-allowlist=FILE` or `CLAUDE_DOCKER_EGRESS_ALLOWLIST` that is not a readable regular file SHALL make `run.sh` exit 1 before creating any container resource, naming the path and its source. With symlinks resolved on both sides, the file SHALL NOT lie inside any workspace the session mounts, read-only or not, compared on a `/` boundary; if it does, `run.sh` SHALL exit 1 naming the workspace.
+`run.sh` SHALL exit 1 before creating any container resource, naming the path and its source, when the allowlist file is not a readable regular file or contains NUL or control bytes other than CR, LF and TAB. It SHALL copy the file once and hash and parse only that copy, so the recorded SHA-256 is that of the bytes parsed.
 
 #### Scenario: Missing file
 
-- **WHEN** the user runs `claude-docker --api --egress-lock --egress-allowlist=/nonexistent ~/repo`
-- **THEN** `run.sh` exits 1 with `not a readable regular file` and `/nonexistent`, and no container starts
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=/nonexistent ~/repo`
+- **THEN** `run.sh` exits 1 with `not a readable regular file` and `/nonexistent`
 
 #### Scenario: Directory as file
 
-- **WHEN** the user passes `--egress-allowlist=$HOME`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME ~/repo`
 - **THEN** `run.sh` exits 1 with `not a readable regular file`
+
+#### Scenario: Hash matches the file
+
+- **GIVEN** a `$HOME/team.allow` with CRLF line endings and no trailing newline
+- **WHEN** an `--egress-allowlist=$HOME/team.allow` session starts
+- **THEN** its `.meta` has `allowlist_sha256=` equal to `sha256sum` of the file
+
+### Requirement: The allowlist file lies outside every workspace
+
+`run.sh` SHALL resolve the allowlist file's own symlinks and its directory's, resolve each workspace the same way, and exit 1 before creating any container resource, naming the workspace, when the file lies inside any workspace the session mounts, read-only or not, compared on a `/` boundary.
 
 #### Scenario: File inside the workspace
 
-- **WHEN** the user runs `claude-docker --api --egress-lock --egress-allowlist=$HOME/repo/allow ~/repo`
-- **THEN** `run.sh` exits 1 naming `~/repo`, and no container starts
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME/repo/allow ~/repo`
+- **THEN** `run.sh` exits 1 naming `~/repo`
 
 #### Scenario: Symlinked workspace
 
 - **GIVEN** `~/work` is a symlink to `/data/work`
-- **WHEN** the user runs a session on `~/work` with `--egress-allowlist=/data/work/allow`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=/data/work/allow ~/work`
 - **THEN** `run.sh` exits 1 naming the workspace
 
 #### Scenario: Symlink into the workspace
 
 - **GIVEN** `$HOME/team.allow` is a symlink to `$HOME/repo/allow`
-- **WHEN** the user runs a session on `~/repo` with `--egress-allowlist=$HOME/team.allow`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
 - **THEN** `run.sh` exits 1 naming the workspace
 
 #### Scenario: Read-only second workspace
 
-- **WHEN** the user runs a session on `~/repo` and `--ro ~/docs` with `--egress-allowlist=$HOME/docs/allow`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME/docs/allow ~/repo --ro ~/docs`
 - **THEN** `run.sh` exits 1 naming `~/docs`
 
 #### Scenario: Sibling directory
 
-- **WHEN** the user runs a session on `~/repo` with `--egress-allowlist=$HOME/repo2/allow`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME/repo2/allow ~/repo`
 - **THEN** the file is accepted
-
-#### Scenario: File given with a space
-
-- **WHEN** the user runs `claude-docker --api --egress-lock --egress-allowlist $HOME/team.allow ~/repo`
-- **THEN** `run.sh` exits 1 and suggests `--egress-allowlist=FILE`
 
 ### Requirement: Allowlist entry grammar
 
-Every allowlist entry SHALL be a hostname or a `.suffix` of at least two labels, either with an optional `:port` (1-65535). A host SHALL use only letters, digits, `-` and `.`, be at most 253 characters, have labels of 1-63 characters that neither start nor end with `-`, have no trailing dot, and be lowercased. In the file, blank lines, whole-line and trailing `#` comments SHALL be ignored and a trailing CR stripped. Exact duplicates SHALL be dropped.
+Every allowlist entry SHALL be a hostname or a `.suffix` of at least two labels, either with an optional `:port` from 1 to 65535. A host SHALL use only letters, digits, `-` and `.`, be at most 253 characters, have labels of 1-63 characters that neither start nor end with `-`, and have no trailing dot. Hosts SHALL be lowercased after validation. Blank lines, whole-line and trailing `#` comments, and a trailing CR SHALL be ignored.
 
 #### Scenario: Every entry form
 
-- **GIVEN** an allowlist file with the lines `# team list`, `PyPI.org  # index`, `.example.org`, `git.example.com:8443`, `.internal.example:8443` and `pypi.org`
-- **WHEN** the user starts an `--egress-allowlist` session
-- **THEN** the session starts, and the saved `.conf` lists `pypi.org` once, `.example.org`, `git.example.com` with port 8443 and `.internal.example` with port 8443
+- **GIVEN** `$HOME/team.allow` with the lines `# team list`, `PyPI.org  # index`, `.corp.example`, `git.example.com:8443` and `.internal.example:8443`
+- **WHEN** `run.sh` generates the squid config for `--egress-allowlist=$HOME/team.allow`
+- **THEN** `egress_allowed_names` contains `pypi.org`, `.corp.example`, `git.example.com` and `.internal.example`, and port ACLs exist for `git.example.com` and `.internal.example` on 8443
+
+#### Scenario: Overlapping entries
+
+- **GIVEN** `$HOME/team.allow` lists `api.example.com`, `.example.com`, `pypi.org` and `pypi.org`
+- **WHEN** `run.sh` generates the squid config
+- **THEN** `egress_allowed_names` contains `.example.com` and `pypi.org` once each and not `api.example.com`, and the proxy image's `squid -k parse` reports no warning
+
+#### Scenario: Boundary values
+
+- **GIVEN** `$HOME/team.allow` lists a 253-character host with 63-character labels, `a.example:1` and `b.example:65535`
+- **WHEN** the user starts an `--egress-allowlist=$HOME/team.allow` session
+- **THEN** the entries are accepted
 
 ### Requirement: An invalid allowlist entry is fatal
 
-An entry outside the grammar, an IPv4 address, an entry equal to or under an `EGRESS_MODEL_PROVIDERS` domain in any case, or an entry covered by a listed `.suffix` SHALL make `run.sh` exit 1 before creating any container resource, naming its source and, for the file, the line.
+An entry outside the grammar, a host whose last label is all digits or `0x` plus hex digits, or an entry equal to or under `anthropic.com`, `claude.ai` or `claude.com` in any case SHALL make `run.sh` exit 1 before creating any container resource. `run.sh` SHALL name the file and line of every invalid entry.
 
 #### Scenario: Wildcard spelling
 
-- **GIVEN** an allowlist file whose line 3 is `*.example.com`
-- **WHEN** the user starts an `--egress-allowlist` session
+- **GIVEN** line 3 of `$HOME/team.allow` is `*.example.com`
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
 - **THEN** `run.sh` exits 1, stderr names the file with `:3`, and suggests `.example.com`
 
-#### Scenario: Invalid hosts
+#### Scenario: Several invalid lines
 
-- **WHEN** the user passes, one at a time, `--egress-allow=` with `-a.example.com`, `a..example.com`, `example.com.`, a 254-character name and `.com`
-- **THEN** `run.sh` exits 1 each time
+- **GIVEN** lines 2 and 5 of `$HOME/team.allow` are invalid
+- **WHEN** the user runs `ANTHROPIC_BASE_URL=https://gw.example.eu ANTHROPIC_AUTH_TOKEN=t claude-docker --api --egress-lock --egress-allowlist=$HOME/team.allow ~/repo`
+- **THEN** stderr names both `:2` and `:5`
 
-#### Scenario: Bad ports
+#### Scenario: Invalid hosts and ports
 
-- **WHEN** the user passes, one at a time, `--egress-allow=` with `example.com:0` and `example.com:65536`
-- **THEN** `run.sh` exits 1 each time
+- **WHEN** the file's only line is, in turn, `-a.example.com`, `a..example.com`, `example.com.`, a 254-character name, a name with a 64-character label, `.com`, `example.com:0`, `example.com:65536` and `example.com all`
+- **THEN** `run.sh` exits 1 each time, naming the file and line
 
-#### Scenario: IP address
+#### Scenario: Addresses
 
-- **WHEN** the user passes `--egress-allow=10.0.0.5`
-- **THEN** `run.sh` exits 1, saying IP entries are not supported
+- **WHEN** the file's only line is, in turn, `10.0.0.5`, `167772165`, `10.5` and `0x7f000001`
+- **THEN** `run.sh` exits 1 each time, saying IP entries are not supported
 
 #### Scenario: Provider hosts in any spelling
 
-- **WHEN** the user passes, one at a time, `--egress-allow=` with `api.anthropic.com`, `API.Anthropic.com`, `.ANTHROPIC.com`, `.anthropic.com:8443` and `claude.ai`
+- **WHEN** the file's only line is, in turn, `api.anthropic.com`, `API.Anthropic.com`, `.ANTHROPIC.com`, `.anthropic.com:8443`, `claude.ai` and `claude.com`
 - **THEN** `run.sh` exits 1 each time, saying the lock refuses model providers' hosts
 
-#### Scenario: Entry covered by a suffix
+#### Scenario: Provider names as labels elsewhere
 
-- **WHEN** the user passes `--egress-allow=api.example.com --egress-allow=.example.com`
-- **THEN** `run.sh` exits 1 naming both entries
-
-#### Scenario: Entry smuggles squid config
-
-- **GIVEN** an allowlist file line `example.com all`
-- **WHEN** the user starts an `--egress-allowlist` session
-- **THEN** `run.sh` exits 1 naming the file and line
-
-### Requirement: Unlisted names are not resolved
-
-Under `--egress-allowlist`, the proxy SHALL deny a request whose host is not a listed name before any rule that matches on a resolved address. The proxy SHALL send no DNS query for such a host.
-
-#### Scenario: Rule order
-
-- **WHEN** the bats suite inspects the generated config under `--egress-allowlist`
-- **THEN** the `deny !egress_allowed_names` rule comes before every `http_access` line that uses a `dst` ACL
-
-#### Scenario: Secret in an unlisted name
-
-- **GIVEN** the generated config run by squid from the proxy image, with `dns_nameservers` pointed at a stub resolver that logs every query
-- **WHEN** requests for `https://secret.attacker.example/`, `http://SECRET.attacker.example/` and `https://1.2.3.4.secret.attacker.example/` are sent through it
-- **THEN** each is answered with 403
-- **AND** the stub's log has no query containing `secret`
+- **WHEN** the file lists `notanthropic.com` and `anthropic.com.corp.example`
+- **THEN** both entries are accepted
 
 ### Requirement: DNS is closed under --egress-allowlist
 
-Under `--egress-allowlist`, after the internal network exists and before the agent container starts, `run.sh` SHALL check from a probe container on that network that an external name does not resolve. When it resolves, or the probe can't run, `run.sh` SHALL abort and say that `--egress-allowlist` needs an engine that doesn't forward external DNS from internal networks.
+Under `--egress-allowlist`, before the egress proxy starts, `run.sh` SHALL check with probe containers that an external name resolves from the session's outbound network and reports not-found from its internal network, each within a time limit. Any other outcome SHALL abort the session, naming DNS. The probes SHALL be named per session, removed by the EXIT trap and covered by the startup prune.
 
 #### Scenario: Engine forwards DNS
 
 - **GIVEN** an engine whose internal networks resolve external names
 - **WHEN** the user starts an `--egress-allowlist` session
-- **THEN** `run.sh` aborts before the agent container starts, naming DNS as the reason
+- **THEN** `run.sh` aborts before the proxy starts, naming DNS as the reason
 
-#### Scenario: Engine doesn't forward DNS
+#### Scenario: DNS unavailable
 
-- **GIVEN** Docker 26 or later
+- **GIVEN** the control lookup from the outbound network fails
 - **WHEN** the user starts an `--egress-allowlist` session
-- **THEN** the probe passes and the session starts
+- **THEN** `run.sh` aborts, saying the DNS check is inconclusive
+
+#### Scenario: Probe times out or can't run
+
+- **GIVEN** the internal probe times out, or exits with a status other than not-found
+- **WHEN** the user starts an `--egress-allowlist` session
+- **THEN** `run.sh` aborts before the proxy starts
+
+#### Scenario: DNS closed
+
+- **GIVEN** an engine whose internal networks don't resolve external names
+- **WHEN** the user starts an `--egress-allowlist` session
+- **THEN** both probes pass and the session starts
+
+### Requirement: Allowlist evidence is saved
+
+Under `--egress-allowlist`, `run.sh` SHALL write the generated squid config to `<start>-<id>.conf` in the evidence directory, owner-only, before the agent container starts. The session's `.meta` SHALL also have `allowlist_file` (the resolved path), `allowlist_sha256` and `allowlist_add_hosts` (the `--add-host` entries given to the proxy).
+
+#### Scenario: Evidence of the list
+
+- **GIVEN** `$HOME/team.allow` is a symlink to `/etc/team/allow`, and `CLAUDE_DOCKER_ADD_HOSTS=git.corp.example:10.0.0.5`
+- **WHEN** an `--egress-allowlist=$HOME/team.allow` session exits
+- **THEN** the `.meta` has `allowlist_file=/etc/team/allow`, its SHA-256 and `allowlist_add_hosts=` containing `git.corp.example:10.0.0.5`
+- **AND** the `.conf` next to it, mode 600, is the config the proxy ran with
+
+#### Scenario: Evidence survives a failed log copy
+
+- **GIVEN** an `--egress-allowlist` session whose engine can't return the proxy's log
+- **WHEN** the session exits
+- **THEN** the `.conf` file is still present
 
 ## MODIFIED Requirements
 
-### Requirement: The session's egress log is saved on the host
-
-When an `--egress-lock` session whose proxy was started exits, the EXIT trap SHALL, before removing the proxy, write the proxy's access log to `<state>/claude-docker/egress/<start>-<id>.log` and a `<start>-<id>.meta` file of `key=value` lines (`start`, `end`, `user`, `host`, `workspace`, `image`, `image_id`, `proxy_image`, `proxy_image_id`, `endpoint`), where `<state>` is `$XDG_STATE_HOME` or `~/.local/state`. Under `--egress-allowlist` only, the `.meta` file SHALL also have `allowlist_file` (resolved path, or empty) and `allowlist_sha256` (of the bytes parsed, or empty), and the generated squid config SHALL be saved as `<start>-<id>.conf`. That directory SHALL NOT be mounted into any container. `run.sh` SHALL NOT rotate or delete saved logs. `run.sh` SHALL check the copy: when the engine's log command fails, or the proxy had been accepting connections but the engine's output lacks squid's `Accepting HTTP Socket connections` startup line, it SHALL print that the log in that file is missing or incomplete, with the reason, and SHALL NOT report it saved. The check SHALL NOT fail the teardown.
-
-#### Scenario: Log saved
-
-- **WHEN** an `--egress-lock` session that connected to `example.org` exits
-- **THEN** a `.log` file under the state directory contains the `CONNECT example.org:443` line
-- **AND** its `.meta` file contains `endpoint=` followed by the `ANTHROPIC_BASE_URL` host
-- **AND** `run.sh` reports the log saved
-
-#### Scenario: Allowlist evidence
-
-- **GIVEN** an `--egress-allowlist=$HOME/team.allow --egress-allow=example.com` session
-- **WHEN** the session exits
-- **THEN** the `.meta` file has `allowlist_file=` with the resolved path of `$HOME/team.allow` and `allowlist_sha256=` with its SHA-256
-- **AND** a `.conf` file next to it is the squid config the proxy ran with, including `example.com`
-
-#### Scenario: Allowlist evidence without a file
-
-- **GIVEN** an `--egress-allowlist --egress-allow=example.com` session with no allowlist file
-- **WHEN** the session exits
-- **THEN** the `.meta` file has empty `allowlist_file=` and `allowlist_sha256=`, and the `.conf` file is saved
-
-#### Scenario: The copy fails
-
-- **GIVEN** an `--egress-lock` session whose engine can't return the proxy's log (for example, a log driver that doesn't support reading)
-- **WHEN** the session exits
-- **THEN** `run.sh` prints that the log in the `.log` file is missing or incomplete, with the engine's error
-- **AND** it doesn't print "egress log saved"
-
-#### Scenario: The log driver rotated the log
-
-- **GIVEN** an `--egress-lock` session whose engine kept only the end of the proxy's log (`max-size` in `daemon.json`)
-- **WHEN** the session exits
-- **THEN** `run.sh` prints that the log in the `.log` file is incomplete because squid's startup line is gone
-- **AND** it doesn't print "egress log saved"
-
 ### Requirement: Model traffic reaches only the configured endpoint
 
-Under `--egress-lock`, `run.sh` SHALL exit 1 before creating any container resource when `ANTHROPIC_BASE_URL` is unset or empty, when its host is not a hostname or IPv4 address of at most 253 characters made of letters, digits, `-` and `.`, when its port is not a number from 1 to 65535, or when its host, compared case-insensitively, is `anthropic.com`, `claude.ai` or `claude.com` or a subdomain of one. The endpoint's port is the one in `ANTHROPIC_BASE_URL`, or the scheme's default (80 for `http`, 443 otherwise). The proxy SHALL allow the `ANTHROPIC_BASE_URL` host on the endpoint's port, and on 80/443, and deny `.anthropic.com`, `.claude.ai` and `.claude.com`. Without `--egress-allowlist` it SHALL then allow every other destination that the metadata, loopback and port rules permit; under it, only what the allowlist requirements state. HTTPS SHALL be proxied by `CONNECT` without TLS interception.
+Under `--egress-lock`, `run.sh` SHALL exit 1 before creating any container resource when `ANTHROPIC_BASE_URL` is unset or empty, when its host is not a hostname or IPv4 address of at most 253 characters made of letters, digits, `-` and `.`, when its port is not a number from 1 to 65535, or when its host, compared case-insensitively, is `anthropic.com`, `claude.ai` or `claude.com` or a subdomain of one. The endpoint's port is the one in `ANTHROPIC_BASE_URL`, or the scheme's default (80 for `http`, 443 otherwise). Without `--egress-allowlist`, the proxy SHALL allow the `ANTHROPIC_BASE_URL` host on the endpoint's port, and on 80/443, then deny `.anthropic.com`, `.claude.ai` and `.claude.com`, then allow every other destination that the metadata, loopback and port rules permit. HTTPS SHALL be proxied by `CONNECT` without TLS interception.
 
 #### Scenario: No endpoint
 
@@ -388,13 +392,13 @@ Under `--egress-lock`, `run.sh` SHALL exit 1 before creating any container resou
 
 #### Scenario: Provider host refused, other hosts open
 
-- **GIVEN** an `--egress-lock` session without `--egress-allowlist`, with `ANTHROPIC_BASE_URL=https://example.com`
+- **GIVEN** an `--egress-lock` session with `ANTHROPIC_BASE_URL=https://example.com`
 - **WHEN** the agent requests `https://example.com/`, `https://example.org/` and `https://api.anthropic.com/` through the proxy
 - **THEN** the first two succeed and the proxy answers `CONNECT api.anthropic.com` with 403
 
 ### Requirement: Metadata and loopback destinations are denied by resolved address
 
-The proxy SHALL deny destinations in `169.254.0.0/16`, `fe80::/10`, `127.0.0.0/8`, `0.0.0.0/8` and `::1`, the metadata addresses `100.100.100.200` (Alibaba Cloud) and `fd00:ec2::254` (AWS IPv6), and the hostnames `metadata.google.internal` and `metadata.azure.internal`, above every allow rule. These checks SHALL apply to the address the proxy resolves for a hostname, not just to IP-literal requests. Without `--egress-allowlist`, private ranges SHALL be reachable. The proxy SHALL permit only ports 80 and 443, and `CONNECT` only to 443, except that the `ANTHROPIC_BASE_URL` host is also reachable on the endpoint's port, and under `--egress-allowlist` an entry listed with a port on that port; those exceptions SHALL come after the metadata, link-local and loopback denies.
+The proxy SHALL deny destinations in `169.254.0.0/16`, `fe80::/10`, `127.0.0.0/8`, `0.0.0.0/8` and `::1`, the metadata addresses `100.100.100.200` (Alibaba Cloud) and `fd00:ec2::254` (AWS IPv6), and the hostnames `metadata.google.internal` and `metadata.azure.internal`, above every allow rule. These checks SHALL apply to the address the proxy resolves for a hostname, not just to IP-literal requests. Without `--egress-allowlist`, private ranges SHALL be reachable. The proxy SHALL permit only ports 80 and 443, and `CONNECT` only to 443, except the endpoint's port for the `ANTHROPIC_BASE_URL` host and the ports the allowlist ports requirement adds; those exceptions SHALL come after the metadata, link-local and loopback denies.
 
 #### Scenario: Cloud metadata
 
