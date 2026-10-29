@@ -2,13 +2,13 @@
 
 Each result either confirms the design or changes it before any code is written. Keep each check as a permanent case: 0.1-0.4, 0.7 and the squid half of 0.6 in the 2.3 harness, the `run.sh` half of 0.6 in 2.2, 0.5 in the 2.4 smoke cell, which has the agent image.
 
-- [ ] 0.1 squid 7.6 warns about and drops one of two overlapping `dstdomain` values (D5 dedup).
-- [ ] 0.2 squid normalises uppercase and trailing-dot request hosts before `dstdomain` matching (rule order scenarios).
-- [ ] 0.3 An IPv4 `ANTHROPIC_BASE_URL` host matches `egress_allowed_names` as a literal under `dstdomain -n` (D6).
-- [ ] 0.4 squid treats `167772165`, `10.5` and `0x7f000001` request hosts as addresses (D5 refusal).
-- [ ] 0.5 The D7 `node` probe in the agent image: the code it returns on the internal network under Docker ≥ 26 and, by hand as for the lock's podman validation, rootless podman (expected `ENOTFOUND` or `EREFUSED`), and that a blackholed resolver gives `ETIMEOUT`. Record the passing codes per runtime in D7 before implementing it.
-- [ ] 0.6 Appendix A at runtime: an `ANTHROPIC_BASE_URL` host of `-gw.example.eu`, `-n` and `--` fails closed (2.2); plain-HTTP and `CONNECT` requests with ESC or another C0 byte in the host never reach the summary as a control character (2.3).
-- [ ] 0.7 squid's `dstdomain` `.suffix` matches the domain itself as well as its subdomains (D3, D5).
+- [x] 0.1 squid 7.6 warns about and drops one of two overlapping `dstdomain` values (D5 dedup).
+- [x] 0.2 squid normalises uppercase and trailing-dot request hosts before `dstdomain` matching (rule order scenarios).
+- [x] 0.3 An IPv4 `ANTHROPIC_BASE_URL` host matches `egress_allowed_names` as a literal under `dstdomain -n` (D6).
+- [x] 0.4 squid treats `167772165`, `10.5` and `0x7f000001` request hosts as addresses (D5 refusal).
+- [x] 0.5 The D7 `node` probe in the agent image: the code it returns on the internal network under Docker ≥ 26 and, by hand as for the lock's podman validation, rootless podman (expected `ENOTFOUND` or `EREFUSED`), and that a blackholed resolver gives `ETIMEOUT`. Record the passing codes per runtime in D7 before implementing it.
+- [x] 0.6 Appendix A at runtime: an `ANTHROPIC_BASE_URL` host of `-gw.example.eu`, `-n` and `--` fails closed (2.2); plain-HTTP and `CONNECT` requests with ESC or another C0 byte in the host never reach the summary as a control character (2.3).
+- [x] 0.7 squid's `dstdomain` `.suffix` matches the domain itself as well as its subdomains (D3, D5).
 
 ## 1. run.sh
 
@@ -41,11 +41,17 @@ Every ADDED scenario in the spec delta is named in one row below; tier in bracke
 
 ## 4. Validation
 
-- [ ] 4.1 `shellcheck`, `bats tests/bats`, `python3 -m unittest discover -s tests -p 'test_*.py'` pass.
+- [x] 4.1 `shellcheck`, `bats tests/bats`, `python3 -m unittest discover -s tests -p 'test_*.py'` pass.
 - [x] 4.2 `openspec validate egress-allowlist --strict` passes.
-- [ ] 4.3 CI green, including the allowlist cell and the 2.3 harness.
+- [x] 4.3 CI green, including the allowlist cell and the 2.3 harness.
 
 ## 5. Archive
 
-- [ ] 5.1 Archive the change.
-- [ ] 5.2 Update the `api-egress-policy` Purpose, which still says other hosts stay open. A Purpose edit can't ride in a delta; this follows the precedent in `archive/2026-08-20-add-go-toolchain/tasks.md` 3.5, and the PR's OpenSpec section records it. Decide there whether to scope the DNS sentence of "The network is the boundary" (design, Open Questions).
+- [x] 5.1 Archive the change.
+- [x] 5.2 Update the `api-egress-policy` Purpose, which still says other hosts stay open. A Purpose edit can't ride in a delta; this follows the precedent in `archive/2026-08-20-add-go-toolchain/tasks.md` 3.5, and the PR's OpenSpec section records it. Decide there whether to scope the DNS sentence of "The network is the boundary" (design, Open Questions).
+      Done: applied directly to `openspec/specs/api-egress-policy/spec.md`
+      (a Purpose edit can't ride in a delta). The DNS sentence of "The
+      network is the boundary" stays as is: it is the intent for every
+      session, Docker 26 and later meet it, the docs name the gap on older
+      engines, and only `--egress-allowlist` checks it. Narrowing it would
+      be a requirement change, so a delta in a change of its own.
